@@ -1,4 +1,9 @@
 <resources>
-    <string name="app_name">HelloWorld</string>
-    <string name="hello_world">这是我的第一个安卓程序</string>
+    <string name="app_name">漫画阅读器</string>
+    <string name="search_hint">搜索漫画标题...</string>
+    <string name="select_folder">选择文件夹</string>
+    <string name="no_comics">点击右上角选择漫画文件夹</string>
+    <string name="no_chapters">暂无章节</string>
+    <string name="no_images">暂无图片</string>
+    <string name="back">返回</string>
 </resources>
