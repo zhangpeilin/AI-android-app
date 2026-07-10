@@ -290,6 +290,36 @@ private fun VerticalReader(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
+    // 检测快速滑动（速度阈值）
+    var isFastScrolling by remember { mutableStateOf(false) }
+    var lastPosition by remember { mutableStateOf(0f) }
+    var lastTime by remember { mutableStateOf(0L) }
+
+    // 监控滚动速度
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (!listState.isScrollInProgress) {
+            isFastScrolling = false
+            lastTime = 0L
+            return@LaunchedEffect
+        }
+
+        while (listState.isScrollInProgress) {
+            val currentPosition = listState.firstVisibleItemIndex * 10000f + listState.firstVisibleItemScrollOffset
+            val currentTime = System.currentTimeMillis()
+            val timeDelta = currentTime - lastTime
+
+            if (timeDelta > 0 && lastTime > 0) {
+                val velocity = kotlin.math.abs(currentPosition - lastPosition) / timeDelta * 1000
+                // 阈值：每秒滚动超过 2000 单位（约 20% 屏幕高度）
+                isFastScrolling = velocity > 2000
+            }
+
+            lastPosition = currentPosition
+            lastTime = currentTime
+            delay(50) // 每 50ms 检测一次
+        }
+    }
+
     // 页码变化时回调
     LaunchedEffect(listState.firstVisibleItemIndex) {
         onPageChanged(listState.firstVisibleItemIndex)
@@ -346,10 +376,11 @@ private fun VerticalReader(
             currentPage = listState.firstVisibleItemIndex,
             onPageJump = { newPage ->
                 coroutineScope.launch {
-                    listState.animateScrollToItem(newPage)
+                    listState.scrollToItem(newPage)
                 }
             },
-            modifier = Modifier.align(Alignment.CenterEnd)
+            modifier = Modifier.align(Alignment.CenterEnd),
+            isScrolling = isFastScrolling
         )
     }
 }
@@ -533,7 +564,8 @@ fun SideProgressBar(
     totalPages: Int,
     currentPage: Int,
     onPageJump: (Int) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isScrolling: Boolean = false
 ) {
     var isVisible by remember { mutableStateOf(false) }
     var isFullOpacity by remember { mutableStateOf(false) }
@@ -545,14 +577,16 @@ fun SideProgressBar(
     // 当前实际进度（非拖动时跟随页码）
     val currentProgress = currentPage.toFloat() / (totalPages - 1).coerceAtLeast(1)
 
-    // 监听页码变化，显示进度条
-    LaunchedEffect(currentPage) {
-        isVisible = true
-        isFullOpacity = false
-        // 3秒后隐藏
-        delay(3000)
-        if (!isDragging) {
-            isVisible = false
+    // 监听页码变化或滚动状态，显示进度条
+    LaunchedEffect(currentPage, isScrolling) {
+        if (isScrolling || isVisible) {
+            isVisible = true
+            isFullOpacity = false
+            // 3秒后隐藏
+            delay(3000)
+            if (!isDragging && !isScrolling) {
+                isVisible = false
+            }
         }
     }
 
@@ -569,7 +603,7 @@ fun SideProgressBar(
             .fillMaxHeight()
             .padding(vertical = 40.dp)
             .onSizeChanged { barHeightPx = it.height }
-            .alpha(if (isVisible) (if (isFullOpacity) 1f else 0.3f) else 0f)
+            .alpha(if (isVisible) (if (isFullOpacity) 1f else 0.5f) else 0f)
             .pointerInput(isVisible, totalPages) {
                 awaitPointerEventScope {
                     while (true) {
