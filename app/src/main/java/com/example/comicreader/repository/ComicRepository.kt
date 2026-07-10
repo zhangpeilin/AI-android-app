@@ -10,6 +10,8 @@ import com.example.comicreader.network.WebDavClient
 import com.example.comicreader.util.ZipHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
@@ -34,6 +36,11 @@ class ComicRepository private constructor(private val context: Context) {
 
     // WebDAV 下载任务跟踪
     private val downloadingComics = ConcurrentHashMap<String, Boolean>()
+
+    // WebDAV 漫画持久化存储
+    private val prefs by lazy {
+        context.getSharedPreferences("webdav_comics", Context.MODE_PRIVATE)
+    }
 
     // 缓存目录：存放从 SAF 复制过来的 zip 文件
     private val zipCacheDir: File by lazy {
@@ -153,6 +160,8 @@ class ComicRepository private constructor(private val context: Context) {
             val file = File(existingComic.filePath)
             if (file.exists()) {
                 Log.d(TAG, "addWebDavComic: 已在缓存中, id=${existingComic.id}")
+                // 确保持久化（之前可能未保存）
+                persistWebDavComic(existingComic)
                 return@withContext existingComic
             }
         }
@@ -190,6 +199,9 @@ class ComicRepository private constructor(private val context: Context) {
             )
             comicCache[id] = comic
             Log.d(TAG, "addWebDavComic: 注册成功, id=$id, title=$title")
+
+            // 持久化保存
+            persistWebDavComic(comic)
 
             comic
         } catch (e: Exception) {
@@ -232,11 +244,66 @@ class ComicRepository private constructor(private val context: Context) {
     }
 
     /**
-     * 获取漫画列表
+     * 获取漫画列表（包含持久化的 WebDAV 漫画）
      */
     fun getComics(): List<Comic> {
+        // 加载持久化的 WebDAV 漫画到缓存
+        loadPersistedWebDavComics()
         Log.d(TAG, "getComics: 返回 ${comicCache.size} 个漫画")
         return comicCache.values.toList()
+    }
+
+    /**
+     * 从 SharedPreferences 加载已持久化的 WebDAV 漫画
+     */
+    private fun loadPersistedWebDavComics() {
+        val jsonStr = prefs.getString("comic_list", null) ?: return
+        try {
+            val jsonArray = JSONArray(jsonStr)
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                val id = obj.getString("id")
+                val filePath = obj.getString("filePath")
+                // 只加载文件仍然存在的漫画
+                if (File(filePath).exists() && !comicCache.containsKey(id)) {
+                    val comic = Comic(
+                        id = id,
+                        title = obj.getString("title"),
+                        filePath = filePath,
+                        fileSize = obj.getLong("fileSize")
+                    )
+                    comicCache[id] = comic
+                    Log.d(TAG, "loadPersistedWebDavComics: 加载 ${comic.title}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "loadPersistedWebDavComics: 解析失败", e)
+        }
+    }
+
+    /**
+     * 持久化保存 WebDAV 漫画信息
+     */
+    private fun persistWebDavComic(comic: Comic) {
+        try {
+            val jsonStr = prefs.getString("comic_list", "[]") ?: "[]"
+            val jsonArray = JSONArray(jsonStr)
+            // 检查是否已存在
+            for (i in 0 until jsonArray.length()) {
+                if (jsonArray.getJSONObject(i).getString("id") == comic.id) return
+            }
+            val obj = JSONObject().apply {
+                put("id", comic.id)
+                put("title", comic.title)
+                put("filePath", comic.filePath)
+                put("fileSize", comic.fileSize)
+            }
+            jsonArray.put(obj)
+            prefs.edit().putString("comic_list", jsonArray.toString()).apply()
+            Log.d(TAG, "persistWebDavComic: 保存 ${comic.title}")
+        } catch (e: Exception) {
+            Log.e(TAG, "persistWebDavComic: 保存失败", e)
+        }
     }
 
     /**
