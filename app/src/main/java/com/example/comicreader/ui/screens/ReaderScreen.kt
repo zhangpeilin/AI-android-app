@@ -50,6 +50,8 @@ fun ReaderScreen(
 
     // 阅读模式状态
     var readingMode by remember { mutableStateOf(ReadingMode.HORIZONTAL) }
+    // 当前页码（切换模式时保持）
+    var currentPageIndex by remember { mutableIntStateOf(0) }
     // 顶部栏是否显示
     var showTopBar by remember { mutableStateOf(true) }
 
@@ -139,6 +141,8 @@ fun ReaderScreen(
                         chapter = chapter,
                         images = images,
                         viewModel = viewModel,
+                        initialPage = currentPageIndex,
+                        onPageChanged = { currentPageIndex = it },
                         onTapCenter = { showTopBar = !showTopBar }
                     )
                     ReadingMode.VERTICAL -> VerticalReader(
@@ -146,6 +150,8 @@ fun ReaderScreen(
                         chapter = chapter,
                         images = images,
                         viewModel = viewModel,
+                        initialPage = currentPageIndex,
+                        onPageChanged = { currentPageIndex = it },
                         onTapCenter = { showTopBar = !showTopBar }
                     )
                 }
@@ -169,13 +175,17 @@ private fun HorizontalReader(
     chapter: String,
     images: List<String>,
     viewModel: ComicReaderViewModel,
+    initialPage: Int,
+    onPageChanged: (Int) -> Unit,
     onTapCenter: () -> Unit
 ) {
-    val pagerState = rememberPagerState(pageCount = { images.size })
+    val pagerState = rememberPagerState(initialPage = initialPage, pageCount = { images.size })
     val context = LocalContext.current
 
-    // 预加载相邻页
+    // 页码变化时回调
     LaunchedEffect(pagerState.currentPage) {
+        onPageChanged(pagerState.currentPage)
+        // 预加载相邻页
         val currentPage = pagerState.currentPage
         for (offset in -1..1) {
             val pageIndex = currentPage + offset
@@ -248,13 +258,17 @@ private fun VerticalReader(
     chapter: String,
     images: List<String>,
     viewModel: ComicReaderViewModel,
+    initialPage: Int,
+    onPageChanged: (Int) -> Unit,
     onTapCenter: () -> Unit
 ) {
-    val listState = rememberLazyListState()
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialPage)
     val context = LocalContext.current
 
-    // 预加载前后5张图片
+    // 页码变化时回调
     LaunchedEffect(listState.firstVisibleItemIndex) {
+        onPageChanged(listState.firstVisibleItemIndex)
+        // 预加载前后5张图片
         val first = listState.firstVisibleItemIndex
         for (offset in -2..5) {
             val pageIndex = first + offset
