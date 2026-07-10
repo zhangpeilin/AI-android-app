@@ -14,9 +14,13 @@ import androidx.navigation.navArgument
 import com.example.comicreader.ui.screens.ChapterListScreen
 import com.example.comicreader.ui.screens.ComicListScreen
 import com.example.comicreader.ui.screens.ReaderScreen
+import com.example.comicreader.ui.screens.ServerSettingsScreen
+import com.example.comicreader.ui.screens.WebDavBrowseScreen
 import com.example.comicreader.ui.theme.ComicReaderTheme
 import com.example.comicreader.viewmodel.ComicListViewModel
 import com.example.comicreader.viewmodel.ComicReaderViewModel
+import com.example.comicreader.viewmodel.ServerSettingsViewModel
+import com.example.comicreader.viewmodel.WebDavBrowseViewModel
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -35,6 +39,8 @@ fun ComicReaderApp() {
     val navController = rememberNavController()
     val comicListViewModel: ComicListViewModel = viewModel()
     val comicReaderViewModel: ComicReaderViewModel = viewModel()
+    val serverSettingsViewModel: ServerSettingsViewModel = viewModel()
+    val webDavBrowseViewModel: WebDavBrowseViewModel = viewModel()
 
     NavHost(
         navController = navController,
@@ -45,6 +51,9 @@ fun ComicReaderApp() {
                 viewModel = comicListViewModel,
                 onComicClick = { comicId, title ->
                     navController.navigate("chapter_list/$comicId/$title")
+                },
+                onWebDavClick = {
+                    navController.navigate("server_settings")
                 }
             )
         }
@@ -86,6 +95,33 @@ fun ComicReaderApp() {
                 chapter = chapter,
                 viewModel = comicReaderViewModel,
                 onBackClick = { navController.popBackStack() }
+            )
+        }
+
+        composable("server_settings") {
+            ServerSettingsScreen(
+                viewModel = serverSettingsViewModel,
+                onBackClick = { navController.popBackStack() },
+                onServerClick = { serverId ->
+                    navController.navigate("webdav_browse/$serverId")
+                }
+            )
+        }
+
+        composable(
+            route = "webdav_browse/{serverId}",
+            arguments = listOf(
+                navArgument("serverId") { type = NavType.StringType }
+            )
+        ) { backStackEntry ->
+            val serverId = backStackEntry.arguments?.getString("serverId") ?: ""
+            WebDavBrowseScreen(
+                serverId = serverId,
+                viewModel = webDavBrowseViewModel,
+                onBackClick = { navController.popBackStack() },
+                onComicClick = { comicId, title ->
+                    navController.navigate("chapter_list/$comicId/$title")
+                }
             )
         }
     }

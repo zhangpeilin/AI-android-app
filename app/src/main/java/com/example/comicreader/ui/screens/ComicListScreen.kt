@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
@@ -35,7 +36,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun ComicListScreen(
     viewModel: ComicListViewModel,
-    onComicClick: (String, String) -> Unit
+    onComicClick: (String, String) -> Unit,
+    onWebDavClick: () -> Unit
 ) {
     val comics by viewModel.comics.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
@@ -60,6 +62,9 @@ fun ComicListScreen(
             TopAppBar(
                 title = { Text("漫画阅读器", fontWeight = FontWeight.Bold) },
                 actions = {
+                    IconButton(onClick = onWebDavClick) {
+                        Icon(Icons.Default.Cloud, contentDescription = "WebDAV")
+                    }
                     IconButton(onClick = { folderLauncher.launch(null) }) {
                         Icon(Icons.Default.FolderOpen, contentDescription = "选择文件夹")
                     }
