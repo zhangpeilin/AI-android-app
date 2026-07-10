@@ -3,6 +3,7 @@ package com.example.comicreader.ui.screens
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
@@ -10,6 +11,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ViewDay
@@ -18,17 +20,24 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.comicreader.viewmodel.ComicReaderViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -181,6 +190,7 @@ private fun HorizontalReader(
 ) {
     val pagerState = rememberPagerState(initialPage = initialPage, pageCount = { images.size })
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
 
     // 页码变化时回调
     LaunchedEffect(pagerState.currentPage) {
@@ -217,33 +227,47 @@ private fun HorizontalReader(
             )
         }
 
-        HorizontalPager(
-            state = pagerState,
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTapGestures { offset ->
-                        // 点击屏幕中央区域切换顶栏
-                        val width = this.size.width
-                        val height = this.size.height
-                        val centerX = width / 2
-                        val centerY = height / 2
-                        val dx = offset.x - centerX
-                        val dy = offset.y - centerY
-                        // 中央 60% 区域
-                        if (kotlin.math.abs(dx) < width * 0.3 && kotlin.math.abs(dy) < height * 0.3) {
-                            onTapCenter()
+        Box(modifier = Modifier.fillMaxSize()) {
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        detectTapGestures { offset ->
+                            // 点击屏幕中央区域切换顶栏
+                            val width = this.size.width
+                            val height = this.size.height
+                            val centerX = width / 2
+                            val centerY = height / 2
+                            val dx = offset.x - centerX
+                            val dy = offset.y - centerY
+                            // 中央 60% 区域
+                            if (kotlin.math.abs(dx) < width * 0.3 && kotlin.math.abs(dy) < height * 0.3) {
+                                onTapCenter()
+                            }
                         }
+                    },
+                beyondBoundsPageCount = 1
+            ) { page ->
+                ComicPage(
+                    comicId = comicId,
+                    chapter = chapter,
+                    imagePath = images[page],
+                    pageIndex = page,
+                    viewModel = viewModel
+                )
+            }
+
+            // 右侧进度条
+            SideProgressBar(
+                totalPages = images.size,
+                currentPage = pagerState.currentPage,
+                onPageJump = { newPage ->
+                    coroutineScope.launch {
+                        pagerState.animateScrollToPage(newPage)
                     }
                 },
-            beyondBoundsPageCount = 1
-        ) { page ->
-            ComicPage(
-                comicId = comicId,
-                chapter = chapter,
-                imagePath = images[page],
-                pageIndex = page,
-                viewModel = viewModel
+                modifier = Modifier.align(Alignment.CenterEnd)
             )
         }
     }
@@ -264,6 +288,7 @@ private fun VerticalReader(
 ) {
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialPage)
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
 
     // 页码变化时回调
     LaunchedEffect(listState.firstVisibleItemIndex) {
@@ -285,33 +310,47 @@ private fun VerticalReader(
         }
     }
 
-    LazyColumn(
-        state = listState,
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(Unit) {
-                detectTapGestures { offset ->
-                    val width = this.size.width
-                    val height = this.size.height
-                    val centerX = width / 2
-                    val centerY = height / 2
-                    val dx = offset.x - centerX
-                    val dy = offset.y - centerY
-                    if (kotlin.math.abs(dx) < width * 0.3 && kotlin.math.abs(dy) < height * 0.3) {
-                        onTapCenter()
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTapGestures { offset ->
+                        val width = this.size.width
+                        val height = this.size.height
+                        val centerX = width / 2
+                        val centerY = height / 2
+                        val dx = offset.x - centerX
+                        val dy = offset.y - centerY
+                        if (kotlin.math.abs(dx) < width * 0.3 && kotlin.math.abs(dy) < height * 0.3) {
+                            onTapCenter()
+                        }
                     }
                 }
+        ) {
+            items(images.size) { index ->
+                VerticalComicPage(
+                    comicId = comicId,
+                    chapter = chapter,
+                    imagePath = images[index],
+                    pageIndex = index,
+                    viewModel = viewModel
+                )
             }
-    ) {
-        items(images.size) { index ->
-            VerticalComicPage(
-                comicId = comicId,
-                chapter = chapter,
-                imagePath = images[index],
-                pageIndex = index,
-                viewModel = viewModel
-            )
         }
+
+        // 右侧进度条
+        SideProgressBar(
+            totalPages = images.size,
+            currentPage = listState.firstVisibleItemIndex,
+            onPageJump = { newPage ->
+                coroutineScope.launch {
+                    listState.animateScrollToItem(newPage)
+                }
+            },
+            modifier = Modifier.align(Alignment.CenterEnd)
+        )
     }
 }
 
@@ -479,5 +518,142 @@ fun ZoomableImage(
                 ),
             contentScale = ContentScale.Fit
         )
+    }
+}
+
+/**
+ * 右侧隐藏式进度条
+ * - 滑动时显示（30%透明度）
+ * - 停止滑动3秒后隐藏
+ * - 点击时显示100%透明度
+ * - 拖动可快速跳转
+ */
+@Composable
+fun SideProgressBar(
+    totalPages: Int,
+    currentPage: Int,
+    onPageJump: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var isVisible by remember { mutableStateOf(false) }
+    var isFullOpacity by remember { mutableStateOf(false) }
+    var barHeightPx by remember { mutableIntStateOf(0) }
+    var isDragging by remember { mutableStateOf(false) }
+    // dragPosition: 进度条上的绝对位置（像素），用于小球定位
+    var dragPositionPx by remember { mutableFloatStateOf(0f) }
+
+    // 当前实际进度（非拖动时跟随页码）
+    val currentProgress = currentPage.toFloat() / (totalPages - 1).coerceAtLeast(1)
+
+    // 监听页码变化，显示进度条
+    LaunchedEffect(currentPage) {
+        isVisible = true
+        isFullOpacity = false
+        // 3秒后隐藏
+        delay(3000)
+        if (!isDragging) {
+            isVisible = false
+        }
+    }
+
+    // 小球的显示进度：拖动时用拖动位置，否则跟随页码
+    val displayProgress = if (isDragging) {
+        (dragPositionPx / barHeightPx.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
+    } else {
+        currentProgress
+    }
+
+    Box(
+        modifier = modifier
+            .width(24.dp)
+            .fillMaxHeight()
+            .padding(vertical = 40.dp)
+            .onSizeChanged { barHeightPx = it.height }
+            .alpha(if (isVisible) (if (isFullOpacity) 1f else 0.3f) else 0f)
+            .pointerInput(isVisible, totalPages) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull() ?: continue
+                        val pos = change.position
+
+                        when {
+                            // 手指按下
+                            change.pressed && !change.previousPressed -> {
+                                isDragging = true
+                                isFullOpacity = true
+                                dragPositionPx = pos.y
+                                val newPage = ((pos.y / barHeightPx.toFloat())
+                                    .coerceIn(0f, 1f) * (totalPages - 1)).toInt()
+                                onPageJump(newPage)
+                                change.consume()
+                            }
+                            // 手指拖动
+                            isDragging && change.pressed -> {
+                                dragPositionPx = pos.y.coerceIn(0f, barHeightPx.toFloat())
+                                val newPage = ((dragPositionPx / barHeightPx.toFloat())
+                                    .coerceIn(0f, 1f) * (totalPages - 1)).toInt()
+                                onPageJump(newPage)
+                                change.consume()
+                            }
+                            // 手指抬起
+                            isDragging && !change.pressed -> {
+                                isDragging = false
+                                isFullOpacity = false
+                                change.consume()
+                            }
+                        }
+                    }
+                }
+            },
+        contentAlignment = Alignment.TopCenter
+    ) {
+        // 进度条背景
+        Box(
+            modifier = Modifier
+                .width(4.dp)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(2.dp))
+                .background(Color.Gray.copy(alpha = 0.5f))
+        ) {
+            // 进度条填充
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .fillMaxHeight(displayProgress)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(MaterialTheme.colorScheme.primary)
+            )
+        }
+
+        // 当前位置指示器（小圆点）
+        val density = LocalDensity.current
+        val ballOffsetY = with(density) {
+            (barHeightPx * displayProgress).toInt().toDp() - 6.dp
+        }
+        Box(
+            modifier = Modifier
+                .offset(y = ballOffsetY)
+                .size(12.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(MaterialTheme.colorScheme.primary)
+        )
+
+        // 页码文字（拖动时显示）
+        if (isDragging) {
+            val pageNum = (displayProgress * (totalPages - 1)).toInt() + 1
+            Text(
+                text = "$pageNum / $totalPages",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .background(
+                        Color.Black.copy(alpha = 0.7f),
+                        RoundedCornerShape(4.dp)
+                    )
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            )
+        }
     }
 }
