@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.io.File
 
 class ComicListViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -58,5 +59,12 @@ class ComicListViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun getCoverBytes(comicId: String) = viewModelScope.launch {
         repository.getCoverBytes(comicId)
+    }
+
+    /**
+     * 获取漫画封面文件（用于 Coil 加载）
+     */
+    suspend fun getCoverFile(comicId: String): File? {
+        return repository.getCoverFile(comicId)
     }
 }

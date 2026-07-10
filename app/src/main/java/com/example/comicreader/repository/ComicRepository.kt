@@ -470,6 +470,31 @@ class ComicRepository private constructor(private val context: Context) {
     }
 
     /**
+     * 获取封面图片文件（用于 Coil 加载）
+     * 将封面提取到缓存目录并返回文件路径
+     */
+    suspend fun getCoverFile(comicId: String): File? = withContext(Dispatchers.IO) {
+        val coverDir = File(context.cacheDir, "comic_covers")
+        coverDir.mkdirs()
+        val coverFile = File(coverDir, "$comicId.jpg")
+
+        // 如果已存在，直接返回
+        if (coverFile.exists()) {
+            return@withContext coverFile
+        }
+
+        // 提取封面并写入文件
+        val bytes = getCoverBytes(comicId)
+        if (bytes != null) {
+            coverFile.writeBytes(bytes)
+            Log.d(TAG, "getCoverFile: 封面已保存, id=$comicId")
+            coverFile
+        } else {
+            null
+        }
+    }
+
+    /**
      * 清除缓存
      */
     fun clearCache() {
