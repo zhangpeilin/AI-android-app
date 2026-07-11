@@ -2,6 +2,7 @@ package com.example.comicreader.ui.screens
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -22,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -35,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.comicreader.viewmodel.ComicReaderViewModel
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -57,6 +60,19 @@ fun ReaderScreen(
     val isLoading by viewModel.isLoading.collectAsState()
     val context = LocalContext.current
 
+    // 阅读进度状态
+    var savedProgress by remember { mutableStateOf<Triple<String, Int, Long>?>(null) }
+    var showProgressDialog by remember { mutableStateOf(false) }
+    var shouldRestoreProgress by remember { mutableStateOf(false) }
+
+    // 检查是否有保存的阅读进度
+    LaunchedEffect(comicId) {
+        savedProgress = viewModel.getReadingProgress(comicId)
+        if (savedProgress != null) {
+            showProgressDialog = true
+        }
+    }
+
     // 阅读模式状态
     var readingMode by remember { mutableStateOf(ReadingMode.HORIZONTAL) }
     // 当前页码（切换模式时保持）
@@ -66,6 +82,22 @@ fun ReaderScreen(
 
     LaunchedEffect(comicId, chapter) {
         viewModel.loadImages(comicId, chapter)
+    }
+
+    // 当用户选择继续时，跳转到保存的页码
+    LaunchedEffect(shouldRestoreProgress, savedProgress, images) {
+        if (shouldRestoreProgress && savedProgress != null && images.isNotEmpty()) {
+            val targetPage = savedProgress!!.second.coerceIn(0, images.size - 1)
+            currentPageIndex = targetPage
+            shouldRestoreProgress = false
+        }
+    }
+
+    // 保存阅读进度
+    LaunchedEffect(currentPageIndex) {
+        if (images.isNotEmpty()) {
+            viewModel.saveReadingProgress(comicId, chapter, currentPageIndex)
+        }
     }
 
     // 预加载图片缓存
@@ -172,6 +204,37 @@ fun ReaderScreen(
             }
         }
     }
+
+    // 阅读进度选择对话框
+    if (showProgressDialog && savedProgress != null) {
+        val progress = savedProgress!!
+        AlertDialog(
+            onDismissRequest = {
+                showProgressDialog = false
+                // 关闭对话框默认从头开始
+            },
+            title = { Text("继续阅读") },
+            text = {
+                Text("上次读到第 ${progress.first} 话，第 ${progress.second + 1} 页\n是否继续？")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showProgressDialog = false
+                    shouldRestoreProgress = true
+                }) {
+                    Text("继续")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showProgressDialog = false
+                    // 从头开始，不设置 shouldRestoreProgress
+                }) {
+                    Text("从头开始")
+                }
+            }
+        )
+    }
 }
 
 /**
@@ -188,9 +251,16 @@ private fun HorizontalReader(
     onPageChanged: (Int) -> Unit,
     onTapCenter: () -> Unit
 ) {
-    val pagerState = rememberPagerState(initialPage = initialPage, pageCount = { images.size })
+    val pagerState = rememberPagerState(initialPage = 0, pageCount = { images.size })
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+
+    // 监听 initialPage 变化，跳转到指定页面
+    LaunchedEffect(initialPage) {
+        if (initialPage > 0 && initialPage != pagerState.currentPage) {
+            pagerState.scrollToPage(initialPage)
+        }
+    }
 
     // 页码变化时回调
     LaunchedEffect(pagerState.currentPage) {
@@ -286,9 +356,20 @@ private fun VerticalReader(
     onPageChanged: (Int) -> Unit,
     onTapCenter: () -> Unit
 ) {
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialPage)
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = 0)
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+
+    // 监听 initialPage 变化，跳转到指定页面
+    LaunchedEffect(initialPage) {
+        if (initialPage > 0 && initialPage != listState.firstVisibleItemIndex) {
+            listState.scrollToItem(initialPage)
+        }
+    }
+
+    // 跟踪上次滚动到的页面，避免重复滚动
+    var lastScrolledPage by remember { mutableIntStateOf(-1) }
+    var scrollJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     // 检测快速滑动（速度阈值）
     var isFastScrolling by remember { mutableStateOf(false) }
@@ -375,8 +456,12 @@ private fun VerticalReader(
             totalPages = images.size,
             currentPage = listState.firstVisibleItemIndex,
             onPageJump = { newPage ->
-                coroutineScope.launch {
+                // 取消之前的滚动任务，避免并发滚动
+                scrollJob?.cancel()
+                scrollJob = coroutineScope.launch {
+                    Log.d("SideProgressBar", "开始滚动: page=$newPage, 当前firstVisible=${listState.firstVisibleItemIndex}")
                     listState.scrollToItem(newPage)
+                    Log.d("SideProgressBar", "滚动完成: firstVisible=${listState.firstVisibleItemIndex}")
                 }
             },
             modifier = Modifier.align(Alignment.CenterEnd),
@@ -573,6 +658,8 @@ fun SideProgressBar(
     var isDragging by remember { mutableStateOf(false) }
     // dragPosition: 进度条上的绝对位置（像素），用于小球定位
     var dragPositionPx by remember { mutableFloatStateOf(0f) }
+    // 上次触发跳转的页码，用于避免重复滚动
+    var lastJumpPage by remember { mutableIntStateOf(-1) }
 
     // 当前实际进度（非拖动时跟随页码）
     val currentProgress = currentPage.toFloat() / (totalPages - 1).coerceAtLeast(1)
@@ -617,17 +704,24 @@ fun SideProgressBar(
                                 isDragging = true
                                 isFullOpacity = true
                                 dragPositionPx = pos.y
-                                val newPage = ((pos.y / barHeightPx.toFloat())
-                                    .coerceIn(0f, 1f) * (totalPages - 1)).toInt()
+                                val progress = (pos.y / barHeightPx.toFloat()).coerceIn(0f, 1f)
+                                val newPage = (progress * (totalPages - 1)).toInt()
+                                Log.d("SideProgressBar", "按下: pos=${pos.y}, progress=$progress, page=$newPage")
+                                lastJumpPage = newPage
                                 onPageJump(newPage)
                                 change.consume()
                             }
-                            // 手指拖动
+                            // 手指拖动（页码变化时触发）
                             isDragging && change.pressed -> {
                                 dragPositionPx = pos.y.coerceIn(0f, barHeightPx.toFloat())
-                                val newPage = ((dragPositionPx / barHeightPx.toFloat())
-                                    .coerceIn(0f, 1f) * (totalPages - 1)).toInt()
-                                onPageJump(newPage)
+                                val progress = (dragPositionPx / barHeightPx.toFloat()).coerceIn(0f, 1f)
+                                val newPage = (progress * (totalPages - 1)).toInt()
+                                // 只在页码变化时触发
+                                if (newPage != lastJumpPage) {
+                                    Log.d("SideProgressBar", "拖动: pos=${dragPositionPx}, progress=$progress, page=$newPage")
+                                    lastJumpPage = newPage
+                                    onPageJump(newPage)
+                                }
                                 change.consume()
                             }
                             // 手指抬起
@@ -642,35 +736,34 @@ fun SideProgressBar(
             },
         contentAlignment = Alignment.TopCenter
     ) {
-        // 进度条背景
-        Box(
-            modifier = Modifier
-                .width(4.dp)
-                .fillMaxHeight()
-                .clip(RoundedCornerShape(2.dp))
-                .background(Color.Gray.copy(alpha = 0.5f))
-        ) {
-            // 进度条填充
-            Box(
-                modifier = Modifier
-                    .width(4.dp)
-                    .fillMaxHeight(displayProgress)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(MaterialTheme.colorScheme.primary)
-            )
-        }
-
-        // 当前位置指示器（小圆点）
+        // 胶囊形进度指示器（无滑轨，带边框）
         val density = LocalDensity.current
-        val ballOffsetY = with(density) {
-            (barHeightPx * displayProgress).toInt().toDp() - 6.dp
-        }
+        val capsuleHeightPx = with(density) { 64.dp.toPx() }
+        // 限制偏移范围，确保指示器始终完整显示
+        val rawOffsetPx = barHeightPx * displayProgress - capsuleHeightPx / 2
+        val clampedOffsetPx = rawOffsetPx.coerceIn(0f, (barHeightPx - capsuleHeightPx).coerceAtLeast(0f))
+        val capsuleOffsetY = with(density) { clampedOffsetPx.toDp() }
         Box(
             modifier = Modifier
-                .offset(y = ballOffsetY)
-                .size(12.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .background(MaterialTheme.colorScheme.primary)
+                .offset(y = capsuleOffsetY)
+                .width(14.dp)
+                .height(64.dp)
+                .clip(RoundedCornerShape(7.dp))
+                .background(
+                    color = Color.White,
+                    shape = RoundedCornerShape(7.dp)
+                )
+                .border(
+                    width = 2.dp,
+                    color = Color.Black.copy(alpha = 0.3f),
+                    shape = RoundedCornerShape(7.dp)
+                )
+                .shadow(
+                    elevation = 8.dp,
+                    shape = RoundedCornerShape(7.dp),
+                    ambientColor = Color.Black.copy(alpha = 0.5f),
+                    spotColor = Color.Black.copy(alpha = 0.5f)
+                )
         )
 
         // 页码文字（拖动时显示）

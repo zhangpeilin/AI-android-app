@@ -494,6 +494,54 @@ class ComicRepository private constructor(private val context: Context) {
         }
     }
 
+    // 阅读进度持久化存储
+    private val readingProgressPrefs by lazy {
+        context.getSharedPreferences("reading_progress", Context.MODE_PRIVATE)
+    }
+
+    /**
+     * 保存阅读进度
+     */
+    fun saveReadingProgress(comicId: String, chapter: String, pageIndex: Int) {
+        val key = "progress_$comicId"
+        val json = JSONObject().apply {
+            put("chapter", chapter)
+            put("pageIndex", pageIndex)
+            put("timestamp", System.currentTimeMillis())
+        }
+        readingProgressPrefs.edit().putString(key, json.toString()).apply()
+        Log.d(TAG, "saveReadingProgress: comicId=$comicId, chapter=$chapter, page=$pageIndex")
+    }
+
+    /**
+     * 获取阅读进度
+     * @return Triple(chapter, pageIndex, timestamp) 或 null
+     */
+    fun getReadingProgress(comicId: String): Triple<String, Int, Long>? {
+        val key = "progress_$comicId"
+        val jsonStr = readingProgressPrefs.getString(key, null) ?: return null
+        return try {
+            val json = JSONObject(jsonStr)
+            Triple(
+                json.getString("chapter"),
+                json.getInt("pageIndex"),
+                json.getLong("timestamp")
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "getReadingProgress: 解析失败", e)
+            null
+        }
+    }
+
+    /**
+     * 清除阅读进度
+     */
+    fun clearReadingProgress(comicId: String) {
+        val key = "progress_$comicId"
+        readingProgressPrefs.edit().remove(key).apply()
+        Log.d(TAG, "clearReadingProgress: comicId=$comicId")
+    }
+
     /**
      * 清除缓存
      */

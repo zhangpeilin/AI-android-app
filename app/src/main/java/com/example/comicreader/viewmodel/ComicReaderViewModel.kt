@@ -50,4 +50,12 @@ class ComicReaderViewModel(application: Application) : AndroidViewModel(applicat
     suspend fun getImageBytes(comicId: String, chapter: String, imagePath: String): ByteArray? {
         return repository.getImageBytes(comicId, chapter, imagePath)
     }
+
+    fun saveReadingProgress(comicId: String, chapter: String, pageIndex: Int) {
+        repository.saveReadingProgress(comicId, chapter, pageIndex)
+    }
+
+    fun getReadingProgress(comicId: String): Triple<String, Int, Long>? {
+        return repository.getReadingProgress(comicId)
+    }
 }
