@@ -75,6 +75,12 @@ fun ComicReaderApp() {
                 onHomeClick = { navController.popBackStack("comic_list", false) },
                 onChapterClick = { chapter ->
                     navController.navigate("reader/$comicId/$title/$chapter")
+                },
+                onAutoOpen = { chapter ->
+                    // 单话自动跳转：先弹出章节列表页，再导航到阅读器
+                    navController.navigate("reader/$comicId/$title/$chapter") {
+                        popUpTo("chapter_list/$comicId/$title") { inclusive = true }
+                    }
                 }
             )
         }

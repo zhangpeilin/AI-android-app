@@ -24,7 +24,8 @@ fun ChapterListScreen(
     viewModel: ComicReaderViewModel,
     onBackClick: () -> Unit,
     onHomeClick: () -> Unit,
-    onChapterClick: (String) -> Unit
+    onChapterClick: (String) -> Unit,
+    onAutoOpen: ((String) -> Unit)? = null  // 单话自动跳转时弹出当前页面
 ) {
     val chapters by viewModel.chapters.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
@@ -33,10 +34,17 @@ fun ChapterListScreen(
         viewModel.loadChapters(comicId, comicTitle)
     }
 
-    // 如果只有 1 话，直接打开阅读器
+    // 如果只有 1 话，直接打开阅读器（使用 onAutoOpen 弹出章节列表页）
+    // 使用标记防止返回时重复触发：用户从阅读器返回后不应再次自动跳转
+    var hasAutoOpened by remember(comicId) { mutableStateOf(false) }
     LaunchedEffect(chapters) {
-        if (chapters.size == 1) {
-            onChapterClick(chapters.first().number)
+        if (chapters.size == 1 && !hasAutoOpened) {
+            hasAutoOpened = true
+            if (onAutoOpen != null) {
+                onAutoOpen(chapters.first().number)
+            } else {
+                onChapterClick(chapters.first().number)
+            }
         }
     }
 

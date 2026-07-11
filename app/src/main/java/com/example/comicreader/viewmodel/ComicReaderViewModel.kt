@@ -1,6 +1,7 @@
 package com.example.comicreader.viewmodel
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.comicreader.model.Chapter
@@ -29,6 +30,17 @@ class ComicReaderViewModel(application: Application) : AndroidViewModel(applicat
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
+    // 记录已处理过进度对话框的 comicId+chapter 组合，防止重复弹出
+    private val handledProgressSessions = mutableSetOf<String>()
+
+    fun markProgressDialogHandled(comicId: String, chapter: String) {
+        handledProgressSessions.add("$comicId#$chapter")
+    }
+
+    fun hasProgressDialogBeenHandled(comicId: String, chapter: String): Boolean {
+        return handledProgressSessions.contains("$comicId#$chapter")
+    }
+
     fun loadChapters(comicId: String, title: String) {
         _comicTitle.value = title
         viewModelScope.launch {
@@ -52,10 +64,20 @@ class ComicReaderViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun saveReadingProgress(comicId: String, chapter: String, pageIndex: Int) {
+        Log.d("ComicReader", "saveProgress: comicId=$comicId, ch=$chapter, page=$pageIndex")
         repository.saveReadingProgress(comicId, chapter, pageIndex)
+    }
+
+    fun clearProgressDialogState(comicId: String, chapter: String) {
+        handledProgressSessions.remove("$comicId#$chapter")
     }
 
     fun getReadingProgress(comicId: String): Triple<String, Int, Long>? {
         return repository.getReadingProgress(comicId)
+    }
+
+    /** 获取指定漫画的已保存页码（用于 composable 重建时恢复） */
+    fun getLastSavedPageIndex(comicId: String): Int {
+        return repository.getReadingProgress(comicId)?.second ?: 0
     }
 }
