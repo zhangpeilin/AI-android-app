@@ -43,17 +43,21 @@ class WebDavBrowseViewModel(application: Application) : AndroidViewModel(applica
     val error: StateFlow<String?> = _error.asStateFlow()
 
     private var serverConfig: WebDavServerConfig? = null
+    private var currentServerId: String? = null
 
     fun init(serverId: String) {
         Log.d(TAG, "init: serverId=$serverId")
+        currentServerId = serverId
         serverConfig = serverRepo.getServer(serverId)
         if (serverConfig == null) {
             Log.e(TAG, "init: 未找到服务器配置, id=$serverId")
             _error.value = "服务器配置不存在"
             return
         }
-        Log.d(TAG, "init: server=${serverConfig?.name}, url=${serverConfig?.url}")
-        loadDirectory("/")
+        // 从上次浏览的目录开始，而不是根目录
+        val startPath = serverConfig?.lastPath ?: "/"
+        Log.d(TAG, "init: server=${serverConfig?.name}, url=${serverConfig?.url}, lastPath=$startPath")
+        loadDirectory(startPath)
     }
 
     fun loadDirectory(path: String) {
@@ -67,7 +71,9 @@ class WebDavBrowseViewModel(application: Application) : AndroidViewModel(applica
                 val result = webDavClient.listDirectory(config, path)
                 _entries.value = result
                 _currentPath.value = path
-                Log.d(TAG, "loadDirectory: 成功, ${result.size} 个条目")
+                // 保存当前浏览路径，下次进入时直接定位到这里
+                currentServerId?.let { serverRepo.updateLastPath(it, path) }
+                Log.d(TAG, "loadDirectory: 成功, ${result.size} 个条目, 已保存路径")
             } catch (e: Exception) {
                 Log.e(TAG, "loadDirectory: 失败", e)
                 _error.value = "加载失败: ${e.message}"

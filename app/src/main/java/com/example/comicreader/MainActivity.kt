@@ -72,6 +72,7 @@ fun ComicReaderApp() {
                 comicTitle = title,
                 viewModel = comicReaderViewModel,
                 onBackClick = { navController.popBackStack() },
+                onHomeClick = { navController.popBackStack("comic_list", false) },
                 onChapterClick = { chapter ->
                     navController.navigate("reader/$comicId/$title/$chapter")
                 }
@@ -94,7 +95,8 @@ fun ComicReaderApp() {
                 comicTitle = title,
                 chapter = chapter,
                 viewModel = comicReaderViewModel,
-                onBackClick = { navController.popBackStack() }
+                onBackClick = { navController.popBackStack() },
+                onHomeClick = { navController.popBackStack("comic_list", false) }
             )
         }
 
@@ -119,6 +121,7 @@ fun ComicReaderApp() {
                 serverId = serverId,
                 viewModel = webDavBrowseViewModel,
                 onBackClick = { navController.popBackStack() },
+                onHomeClick = { navController.popBackStack("comic_list", false) },
                 onComicClick = { comicId, title ->
                     navController.navigate("chapter_list/$comicId/$title")
                 }

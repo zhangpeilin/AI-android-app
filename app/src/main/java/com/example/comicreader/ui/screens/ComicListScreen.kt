@@ -49,6 +49,11 @@ fun ComicListScreen(
 ) {
     val comics by viewModel.comics.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+
+    // 每次进入页面时刷新漫画列表（从WebDAV返回时能看到新下载的漫画）
+    LaunchedEffect(Unit) {
+        viewModel.loadComics()
+    }
     val searchQuery by viewModel.searchQuery.collectAsState()
     val selectedFolder by viewModel.selectedFolderName.collectAsState()
     val context = LocalContext.current

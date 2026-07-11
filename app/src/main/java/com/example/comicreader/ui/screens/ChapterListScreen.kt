@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -22,6 +23,7 @@ fun ChapterListScreen(
     comicTitle: String,
     viewModel: ComicReaderViewModel,
     onBackClick: () -> Unit,
+    onHomeClick: () -> Unit,
     onChapterClick: (String) -> Unit
 ) {
     val chapters by viewModel.chapters.collectAsState()
@@ -29,6 +31,13 @@ fun ChapterListScreen(
 
     LaunchedEffect(comicId) {
         viewModel.loadChapters(comicId, comicTitle)
+    }
+
+    // 如果只有 1 话，直接打开阅读器
+    LaunchedEffect(chapters) {
+        if (chapters.size == 1) {
+            onChapterClick(chapters.first().number)
+        }
     }
 
     Scaffold(
@@ -44,6 +53,11 @@ fun ChapterListScreen(
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onHomeClick) {
+                        Icon(Icons.Default.Home, contentDescription = "返回首页")
                     }
                 }
             )

@@ -9,6 +9,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -26,6 +27,7 @@ fun WebDavBrowseScreen(
     serverId: String,
     viewModel: WebDavBrowseViewModel,
     onBackClick: () -> Unit,
+    onHomeClick: () -> Unit,
     onComicClick: (String, String) -> Unit
 ) {
     val entries by viewModel.entries.collectAsState()
@@ -47,32 +49,46 @@ fun WebDavBrowseScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            "WebDAV 浏览",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = MaterialTheme.typography.titleMedium.fontSize
-                        )
-                        Text(
-                            currentPath,
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = {
-                        if (!viewModel.goBack()) {
-                            onBackClick()
+            Column {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text(
+                                "WebDAV 浏览",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = MaterialTheme.typography.titleMedium.fontSize
+                            )
+                            Text(
+                                currentPath,
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
-                    }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = {
+                            if (!viewModel.goBack()) {
+                                onBackClick()
+                            }
+                        }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = onHomeClick) {
+                            Icon(Icons.Default.Home, contentDescription = "返回首页")
+                        }
                     }
+                )
+                // 下载进度条（固定在顶部栏下方，不随内容滚动）
+                if (downloadProgress != null) {
+                    LinearProgressIndicator(
+                        progress = { downloadProgress ?: 0f },
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
-            )
+            }
         }
     ) { padding ->
         Box(
@@ -80,16 +96,6 @@ fun WebDavBrowseScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            // 下载进度条
-            if (downloadProgress != null) {
-                LinearProgressIndicator(
-                    progress = { downloadProgress ?: 0f },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .align(Alignment.TopCenter)
-                )
-            }
-
             when {
                 isLoading -> {
                     Box(

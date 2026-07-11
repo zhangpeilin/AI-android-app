@@ -79,6 +79,19 @@ class WebDavServerRepository private constructor(context: Context) {
         return getServers().find { it.id == serverId }
     }
 
+    /**
+     * 更新服务器最后浏览的路径
+     */
+    fun updateLastPath(serverId: String, lastPath: String) {
+        Log.d(TAG, "updateLastPath: id=$serverId, path=$lastPath")
+        val servers = getServers().toMutableList()
+        val index = servers.indexOfFirst { it.id == serverId }
+        if (index >= 0) {
+            servers[index] = servers[index].copy(lastPath = lastPath)
+            saveServers(servers)
+        }
+    }
+
     private fun saveServers(servers: List<WebDavServerConfig>) {
         val jsonArray = JSONArray()
         servers.forEach { config ->
@@ -88,6 +101,7 @@ class WebDavServerRepository private constructor(context: Context) {
                 put("url", config.url)
                 put("username", config.username)
                 put("password", config.password)
+                put("lastPath", config.lastPath)
             })
         }
         prefs.edit().putString(KEY_SERVERS, jsonArray.toString()).apply()
@@ -105,7 +119,8 @@ class WebDavServerRepository private constructor(context: Context) {
                     name = obj.getString("name"),
                     url = obj.getString("url"),
                     username = obj.getString("username"),
-                    password = obj.getString("password")
+                    password = obj.getString("password"),
+                    lastPath = obj.optString("lastPath", "/")
                 ))
             }
             Log.d(TAG, "parseServers: parsed ${servers.size} servers")

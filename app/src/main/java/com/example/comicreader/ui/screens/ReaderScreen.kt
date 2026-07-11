@@ -15,6 +15,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.ViewDay
 import androidx.compose.material.icons.filled.ViewStream
 import androidx.compose.material3.*
@@ -54,7 +55,8 @@ fun ReaderScreen(
     comicTitle: String,
     chapter: String,
     viewModel: ComicReaderViewModel,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    onHomeClick: () -> Unit
 ) {
     val images by viewModel.currentImages.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
@@ -73,8 +75,8 @@ fun ReaderScreen(
         }
     }
 
-    // 阅读模式状态
-    var readingMode by remember { mutableStateOf(ReadingMode.HORIZONTAL) }
+    // 阅读模式状态（默认垂直模式）
+    var readingMode by remember { mutableStateOf(ReadingMode.VERTICAL) }
     // 当前页码（切换模式时保持）
     var currentPageIndex by remember { mutableIntStateOf(0) }
     // 顶部栏是否显示
@@ -133,6 +135,10 @@ fun ReaderScreen(
                         }
                     },
                     actions = {
+                        // 首页按钮
+                        IconButton(onClick = onHomeClick) {
+                            Icon(Icons.Default.Home, contentDescription = "返回首页")
+                        }
                         // 阅读模式切换按钮
                         IconButton(onClick = {
                             readingMode = if (readingMode == ReadingMode.HORIZONTAL)
