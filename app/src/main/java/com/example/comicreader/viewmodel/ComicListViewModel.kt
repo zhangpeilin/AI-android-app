@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.comicreader.model.Comic
 import com.example.comicreader.repository.ComicRepository
+import com.example.comicreader.repository.ComicSortMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,13 +29,31 @@ class ComicListViewModel(application: Application) : AndroidViewModel(applicatio
     private val _selectedFolderName = MutableStateFlow<String?>(null)
     val selectedFolderName: StateFlow<String?> = _selectedFolderName.asStateFlow()
 
+    private val _sortMode = MutableStateFlow(ComicSortMode.TITLE)
+    val sortMode: StateFlow<ComicSortMode> = _sortMode.asStateFlow()
+
+    private val _selectedIds = MutableStateFlow<Set<String>>(emptySet())
+    val selectedIds: StateFlow<Set<String>> = _selectedIds.asStateFlow()
+
+    val isSelectionMode: Boolean get() = _selectedIds.value.isNotEmpty()
+
     init {
-        // 加载上次扫描的结果
         loadComics()
     }
 
     fun loadComics() {
-        _comics.value = repository.getComics()
+        val raw = repository.getComics()
+        // 异步获取页数缓存，然后排序
+        viewModelScope.launch {
+            raw.forEach { comic ->
+                if (comic.pageCount == 0) {
+                    repository.getPageCount(comic.id)
+                }
+            }
+            // 重新获取（getPageCount 已更新 comicCache）
+            val updated = repository.getComics()
+            _comics.value = repository.sortComics(updated, _sortMode.value)
+        }
     }
 
     fun scanFolder(uri: Uri, folderName: String) {
@@ -54,7 +73,50 @@ class ComicListViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun search(query: String) {
         _searchQuery.value = query
-        _comics.value = repository.searchComics(query)
+        val results = if (query.isBlank()) {
+            repository.getComics()
+        } else {
+            repository.searchComics(query)
+        }
+        _comics.value = repository.sortComics(results, _sortMode.value)
+    }
+
+    fun setSortMode(mode: ComicSortMode) {
+        _sortMode.value = mode
+        // 对当前列表重新排序
+        _comics.value = repository.sortComics(_comics.value, mode)
+    }
+
+    fun toggleSelection(comicId: String) {
+        val current = _selectedIds.value.toMutableSet()
+        if (current.contains(comicId)) {
+            current.remove(comicId)
+        } else {
+            current.add(comicId)
+        }
+        _selectedIds.value = current
+    }
+
+    fun clearSelection() {
+        _selectedIds.value = emptySet()
+    }
+
+    fun deleteSelected() {
+        val ids = _selectedIds.value.toList()
+        if (ids.isEmpty()) return
+        repository.deleteComics(ids)
+        _selectedIds.value = emptySet()
+        loadComics()
+    }
+
+    fun deleteComic(comicId: String) {
+        repository.deleteComic(comicId)
+        loadComics()
+    }
+
+    fun deleteComics(comicIds: List<String>) {
+        repository.deleteComics(comicIds)
+        loadComics()
     }
 
     fun getCoverBytes(comicId: String) = viewModelScope.launch {
@@ -66,5 +128,19 @@ class ComicListViewModel(application: Application) : AndroidViewModel(applicatio
      */
     suspend fun getCoverFile(comicId: String): File? {
         return repository.getCoverFile(comicId)
+    }
+
+    /**
+     * 获取格式化阅读进度文本，未读返回 null
+     */
+    fun getReadingProgressText(comicId: String): String? {
+        return repository.getReadingProgressText(comicId)
+    }
+
+    /**
+     * 获取上次阅读时间戳
+     */
+    fun getLastReadTime(comicId: String): Long {
+        return repository.getLastReadTime(comicId)
     }
 }

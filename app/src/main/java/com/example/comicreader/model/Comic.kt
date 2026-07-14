@@ -6,6 +6,7 @@ data class Comic(
     val artist: String = "Unknown",
     val filePath: String,
     val fileSize: Long = 0L,
+    val pageCount: Int = 0,
     val coverImageBytes: ByteArray? = null
 ) {
     override fun equals(other: Any?): Boolean {

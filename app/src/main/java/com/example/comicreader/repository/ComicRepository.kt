@@ -15,6 +15,9 @@ import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
+/** 漫画排序模式 */
+enum class ComicSortMode { TITLE, LAST_READ, FILE_SIZE, PAGE_COUNT }
+
 class ComicRepository private constructor(private val context: Context) {
 
     companion object {
@@ -561,5 +564,129 @@ class ComicRepository private constructor(private val context: Context) {
         comicCache.clear()
         coverCache.clear()
         scannedUris.clear()
+    }
+
+    /**
+     * 删除单个漫画的全部本地缓存
+     */
+    fun deleteComic(comicId: String) {
+        Log.d(TAG, "deleteComic: comicId=$comicId")
+        val comic = comicCache[comicId] ?: return
+
+        // 1. 删除 zip 文件
+        try {
+            val file = File(comic.filePath)
+            if (file.exists()) file.delete()
+        } catch (e: Exception) {
+            Log.w(TAG, "deleteComic: 删除zip失败", e)
+        }
+
+        // 2. 删除缓存图片（comic_pages 中以 comicId 开头的文件）
+        try {
+            val pagesDir = File(context.cacheDir, "comic_pages")
+            pagesDir.listFiles()?.forEach { f ->
+                if (f.name.startsWith(comicId)) f.delete()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "deleteComic: 删除页面缓存失败", e)
+        }
+
+        // 3. 删除封面缓存
+        try {
+            val coverFile = File(context.cacheDir, "comic_covers/${comicId}.jpg")
+            if (coverFile.exists()) coverFile.delete()
+        } catch (e: Exception) {
+            Log.w(TAG, "deleteComic: 删除封面失败", e)
+        }
+
+        // 4. 清除阅读进度
+        clearReadingProgress(comicId)
+
+        // 5. 从 WebDAV 持久化列表中移除
+        try {
+            val jsonStr = prefs.getString("comic_list", "[]") ?: "[]"
+            val jsonArray = JSONArray(jsonStr)
+            val newArray = JSONArray()
+            for (i in 0 until jsonArray.length()) {
+                if (jsonArray.getJSONObject(i).getString("id") != comicId) {
+                    newArray.put(jsonArray.get(i))
+                }
+            }
+            prefs.edit().putString("comic_list", newArray.toString()).apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "deleteComic: 移除持久化失败", e)
+        }
+
+        // 6. 从缓存中移除
+        comicCache.remove(comicId)
+        coverCache.remove("cover_$comicId")
+        Log.d(TAG, "deleteComic: 删除完成 ${comic.title}")
+    }
+
+    /**
+     * 批量删除漫画
+     */
+    fun deleteComics(comicIds: List<String>) {
+        comicIds.forEach { deleteComic(it) }
+    }
+
+    /**
+     * 获取漫画页数（缓存优先，首次解析 zip 后缓存）
+     */
+    suspend fun getPageCount(comicId: String): Int = withContext(Dispatchers.IO) {
+        // 先检查缓存
+        val cached = readingProgressPrefs.getInt("pages_$comicId", -1)
+        if (cached > 0) return@withContext cached
+
+        val comic = comicCache[comicId] ?: return@withContext 0
+        val file = File(comic.filePath)
+        if (!file.exists()) return@withContext 0
+
+        try {
+            val chapters = ZipHelper.getChapters(file)
+            val count = chapters.firstOrNull()?.images?.size ?: 0
+            // 缓存页数
+            readingProgressPrefs.edit().putInt("pages_$comicId", count).apply()
+            // 同时更新 comic 对象的 pageCount
+            comicCache[comicId] = comic.copy(pageCount = count)
+            return@withContext count
+        } catch (e: Exception) {
+            Log.w(TAG, "getPageCount: 解析失败", e)
+            return@withContext 0
+        }
+    }
+
+    /**
+     * 获取格式化后的阅读进度文本（如 "已读 5/229"）
+     * 未读过的漫画返回 null
+     */
+    fun getReadingProgressText(comicId: String): String? {
+        val progress = getReadingProgress(comicId) ?: return null
+        val pageCount = readingProgressPrefs.getInt("pages_$comicId", -1)
+        val pageIndex = progress.second + 1 // 转为 1-based
+        return if (pageCount > 0) {
+            "已读 $pageIndex/$pageCount"
+        } else {
+            "第 ${progress.first} 章"
+        }
+    }
+
+    /**
+     * 获取上次阅读时间戳（毫秒），未读返回 0L
+     */
+    fun getLastReadTime(comicId: String): Long {
+        return getReadingProgress(comicId)?.third ?: 0L
+    }
+
+    /**
+     * 按指定模式排序漫画
+     */
+    fun sortComics(comics: List<Comic>, mode: ComicSortMode): List<Comic> {
+        return when (mode) {
+            ComicSortMode.TITLE -> comics.sortedBy { it.title }
+            ComicSortMode.LAST_READ -> comics.sortedByDescending { getLastReadTime(it.id) }
+            ComicSortMode.FILE_SIZE -> comics.sortedByDescending { it.fileSize }
+            ComicSortMode.PAGE_COUNT -> comics.sortedByDescending { it.pageCount }
+        }
     }
 }
