@@ -459,11 +459,20 @@ private fun VerticalReader(
     var lastPosition by remember { mutableStateOf(0f) }
     var lastTime by remember { mutableStateOf(0L) }
 
-    // 监控滚动速度
+    // 监控滚动速度 + 检测是否到达末尾（firstVisibleItemIndex 可能在最后页不更新）
     LaunchedEffect(listState.isScrollInProgress) {
         if (!listState.isScrollInProgress) {
             isFastScrolling = false
             lastTime = 0L
+            // 滚动停止时检查最后可见项是否已是最后一页
+            val layoutInfo = listState.layoutInfo
+            val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index
+            if (lastVisibleIndex != null && lastVisibleIndex == images.size - 1) {
+                if (lastVisibleIndex > listState.firstVisibleItemIndex) {
+                    Log.d("ReaderScreen", "[V到达末尾] 强制设为第 ${images.size} 页 (fvi=${listState.firstVisibleItemIndex})")
+                    onPageChanged(lastVisibleIndex)
+                }
+            }
             return@LaunchedEffect
         }
 
