@@ -42,10 +42,8 @@ import coil.request.ImageRequest
 import com.example.comicreader.viewmodel.ComicReaderViewModel
 import android.util.Log
 import android.graphics.BitmapFactory
-import kotlinx.coroutines.async
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -102,46 +100,13 @@ fun ReaderScreen(
         viewModel.loadImages(comicId, chapter)
     }
 
-    // 图片加载完成后：预缓存所有图片 → 计算所有高度 → 检查阅读进度
+    // 图片加载完成后：检查阅读进度（不等待缓存完成，弹窗要立刻出现）→ 预缓存
     LaunchedEffect(images) {
         if (images.isNotEmpty()) {
-            // 1. 预缓存所有图片文件 + 并行计算宽高比
             val snapshot = images.toList()
             val widthPx = context.resources.displayMetrics.widthPixels
 
-            coroutineScope {
-                val results = snapshot.mapIndexed { i, imagePath ->
-                    async(Dispatchers.IO) {
-                        try {
-                            val cacheFile = File(context.cacheDir, "comic_pages/${comicId}_${chapter}_$i")
-                            if (!cacheFile.exists()) {
-                                cacheFile.parentFile?.mkdirs()
-                                val bytes = viewModel.getImageBytes(comicId, chapter, imagePath)
-                                if (bytes != null) cacheFile.writeBytes(bytes)
-                            }
-                            if (cacheFile.exists()) {
-                                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                                BitmapFactory.decodeFile(cacheFile.absolutePath, options)
-                                if (options.outWidth > 0 && options.outHeight > 0) {
-                                    val heightPx = widthPx * options.outHeight.toFloat() / options.outWidth
-                                    i to heightPx
-                                } else null
-                            } else null
-                        } catch (e: Exception) {
-                            null
-                        }
-                    }
-                }
-                val pixelHeights = results.mapNotNull { it.await() }
-                pageHeights = pixelHeights.map { (index, heightPx) ->
-                    index to with(density) { heightPx.toDp() }
-                }.toMap()
-            }
-
-            Log.d("ReaderScreen", "[图片就绪] comicId=$comicId, images=${images.size}, hasHandled=$hasHandledProgressDialog, heights=${pageHeights?.size}")
-            isImagesReady = true
-
-            // 2. 检查阅读进度
+            // 1. 先检查阅读进度
             if (!hasHandledProgressDialog && savedProgress == null) {
                 savedProgress = viewModel.getReadingProgress(comicId)
                 Log.d("ReaderScreen", "[查进度] savedProgress=${if(savedProgress!=null) "ch=${savedProgress!!.first},p=${savedProgress!!.second}" else "null"}")
@@ -156,6 +121,36 @@ fun ReaderScreen(
                 Log.d("ReaderScreen", "[重建恢复] hasHandled=true, restoredPage=$restoredPage, imagesSize=${images.size}")
                 currentPageIndex = restoredPage.coerceIn(0, images.size - 1)
             }
+
+            // 2. 顺序缓存图片 + 计算高度（避免并发 OOM）
+            withContext(Dispatchers.IO) {
+                val pixelHeightList = mutableListOf<Pair<Int, Float>>()
+                snapshot.forEachIndexed { i, imagePath ->
+                    try {
+                        val cacheFile = File(context.cacheDir, "comic_pages/${comicId}_${chapter}_$i")
+                        if (!cacheFile.exists()) {
+                            cacheFile.parentFile?.mkdirs()
+                            viewModel.writeImageToFile(comicId, chapter, imagePath, cacheFile)
+                        }
+                        if (cacheFile.exists()) {
+                            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                            BitmapFactory.decodeFile(cacheFile.absolutePath, options)
+                            if (options.outWidth > 0 && options.outHeight > 0) {
+                                val heightPx = widthPx * options.outHeight.toFloat() / options.outWidth
+                                pixelHeightList.add(i to heightPx)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // 跳过失败图片
+                    }
+                }
+                pageHeights = pixelHeightList.map { (index, heightPx) ->
+                    index to with(density) { heightPx.toDp() }
+                }.toMap()
+            }
+
+            Log.d("ReaderScreen", "[图片就绪] comicId=$comicId, images=${images.size}, hasHandled=$hasHandledProgressDialog, heights=${pageHeights?.size}")
+            isImagesReady = true
         }
     }
 
@@ -562,6 +557,13 @@ fun VerticalComicPage(
     }
     var fileReady by remember { mutableStateOf(cacheFile.exists()) }
 
+    // 日志：当前页面渲染的图片
+    LaunchedEffect(fileReady) {
+        if (fileReady) {
+            Log.d("ReaderScreen", "[V渲染] index=$pageIndex, image=$imagePath")
+        }
+    }
+
     // 仅在缓存不存在时下载（多数情况下在 ReaderScreen 中已预缓存）
     LaunchedEffect(imagePath, cacheFile) {
         if (!cacheFile.exists()) {
@@ -595,6 +597,17 @@ fun VerticalComicPage(
         } else {
             CircularProgressIndicator(color = Color.White)
         }
+        // 调试：左上角显示当前页序号
+        Text(
+            "${pageIndex + 1}",
+            color = Color.White.copy(alpha = 0.6f),
+            fontSize = MaterialTheme.typography.labelSmall.fontSize,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(4.dp)
+                .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(2.dp))
+                .padding(horizontal = 4.dp, vertical = 1.dp)
+        )
     }
 }
 

@@ -6,10 +6,13 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.comicreader.model.Chapter
 import com.example.comicreader.repository.ComicRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 
 class ComicReaderViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -54,13 +57,32 @@ class ComicReaderViewModel(application: Application) : AndroidViewModel(applicat
         _currentChapter.value = chapter
         viewModelScope.launch {
             _isLoading.value = true
-            _currentImages.value = repository.getImages(comicId, chapter)
+            // 清除旧的图片缓存（排序变化后 index 映射已不同）
+            withContext(Dispatchers.IO) {
+                val cacheDir = File(getApplication<Application>().cacheDir, "comic_pages")
+                cacheDir.listFiles()?.forEach { file ->
+                    if (file.name.startsWith("${comicId}_${chapter}_")) {
+                        file.delete()
+                    }
+                }
+            }
+            _currentImages.value = emptyList() // 先清空旧数据，避免 stale 数据触发 LaunchedEffect
+            val result = repository.getImages(comicId, chapter)
+            Log.d("ComicReader", "loadImages: ${result.size} 张, first=${result.firstOrNull()}, last=${result.lastOrNull()}")
+            _currentImages.value = result
             _isLoading.value = false
         }
     }
 
     suspend fun getImageBytes(comicId: String, chapter: String, imagePath: String): ByteArray? {
         return repository.getImageBytes(comicId, chapter, imagePath)
+    }
+
+    /**
+     * 将 zip 中的图片直接流式写入缓存文件（避免 ByteArray 大块内存分配）
+     */
+    suspend fun writeImageToFile(comicId: String, chapter: String, imagePath: String, destFile: File): Boolean {
+        return repository.writeImageToFile(comicId, chapter, imagePath, destFile)
     }
 
     fun saveReadingProgress(comicId: String, chapter: String, pageIndex: Int) {

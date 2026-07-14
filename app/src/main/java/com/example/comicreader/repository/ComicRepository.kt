@@ -446,6 +446,17 @@ class ComicRepository private constructor(private val context: Context) {
         }
 
     /**
+     * 将 zip 中的图片直接流式写入缓存文件（避免 ByteArray 大块内存分配）
+     */
+    suspend fun writeImageToFile(comicId: String, chapter: String, imagePath: String, destFile: File): Boolean =
+        withContext(Dispatchers.IO) {
+            val comic = comicCache[comicId] ?: return@withContext false
+            val file = File(comic.filePath)
+            if (!file.exists()) return@withContext false
+            ZipHelper.writeImageToFile(file, imagePath, destFile, chapter)
+        }
+
+    /**
      * 获取封面图片字节
      */
     suspend fun getCoverBytes(comicId: String): ByteArray? = withContext(Dispatchers.IO) {

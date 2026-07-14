@@ -6,6 +6,7 @@ import android.util.Log
 import com.example.comicreader.model.Chapter
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.zip.ZipFile
 
@@ -58,6 +59,13 @@ object ZipHelper {
                         .map { it.name }
                         .sortedWith(ImageComparator)
                     Log.d("ZipHelper", "扁平结构，章节1有 ${sorted.size} 张图片")
+                    // 日志验证排序
+                    if (sorted.isNotEmpty()) {
+                        val first10 = sorted.take(10).joinToString()
+                        val last10 = sorted.takeLast(10).joinToString()
+                        Log.d("ZipHelper", "排序验证(前10): $first10")
+                        Log.d("ZipHelper", "排序验证(后10): $last10")
+                    }
                     listOf(Chapter("1", sorted))
                 } else {
                     // 有子目录：每个子目录是一个章节
@@ -95,18 +103,38 @@ object ZipHelper {
                 }
                 if (entry == null) return null
 
-                val inputStream = zf.getInputStream(entry)
                 val bos = ByteArrayOutputStream()
-                val buffer = ByteArray(20000)
-                var bytesRead: Int
-                while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-                    bos.write(buffer, 0, bytesRead)
+                zf.getInputStream(entry).use { input ->
+                    input.copyTo(bos, bufferSize = 8192)
                 }
-                inputStream.close()
                 bos.toByteArray()
             }
         } catch (e: Exception) {
             null
+        }
+    }
+
+    /**
+     * 将 zip 中的图片直接流式写入目标文件（避免 ByteArray 大块内存分配）
+     */
+    fun writeImageToFile(zipFile: File, imagePath: String, destFile: File, chapter: String? = null): Boolean {
+        return try {
+            ZipFile(zipFile).use { zf ->
+                var entry = zf.getEntry(imagePath)
+                if (entry == null && chapter != null) {
+                    entry = zf.getEntry("$chapter/$imagePath")
+                }
+                if (entry == null) return false
+
+                zf.getInputStream(entry).use { input ->
+                    FileOutputStream(destFile).use { output ->
+                        input.copyTo(output, bufferSize = 8192)
+                    }
+                }
+            }
+            true
+        } catch (e: Exception) {
+            false
         }
     }
 
@@ -156,15 +184,22 @@ object ImageComparator : Comparator<String> {
     override fun compare(s1: String, s2: String): Int {
         val num1 = extractNumber(s1)
         val num2 = extractNumber(s2)
-        return if (num1 != null && num2 != null) {
-            num1.compareTo(num2)
-        } else {
-            s1.compareTo(s2)
+        return when {
+            num1 != null && num2 != null -> {
+                val cmp = num1.compareTo(num2)
+                if (cmp != 0) cmp else s1.compareTo(s2)
+            }
+            num1 != null -> -1  // 有数字的排前面
+            num2 != null -> 1   // 有数字的排前面
+            else -> s1.compareTo(s2)
         }
     }
 
     private fun extractNumber(fileName: String): Int? {
         val name = fileName.substringBeforeLast('.')
-        return name.filter { it.isDigit() }.toIntOrNull()
+        // 只提取文件名最前面的数字序号（在第一个 _ 之前），而非拼合所有数字
+        // 例: "022_05_20_05_00.jpg" → "022" → 22，"133_32_06_01.jpg" → "133" → 133
+        val leading = name.substringBefore('_').filter { it.isDigit() }
+        return leading.toIntOrNull()
     }
 }
