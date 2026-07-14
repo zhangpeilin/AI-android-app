@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.ViewDay
 import androidx.compose.material.icons.filled.ViewStream
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -34,12 +35,16 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.comicreader.viewmodel.ComicReaderViewModel
 import android.util.Log
+import android.graphics.BitmapFactory
+import kotlinx.coroutines.async
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -62,12 +67,13 @@ fun ReaderScreen(
     val images by viewModel.currentImages.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val context = LocalContext.current
+    val density = LocalDensity.current
 
     // 阅读进度状态（每次 comicId 变化时重置）
     var savedProgress by remember(comicId) { mutableStateOf<Triple<String, Int, Long>?>(null) }
     var showProgressDialog by remember(comicId) { mutableStateOf(false) }
-    // 使用 ViewModel 跟踪是否已处理过进度对话框（ViewModel 在导航中持久存在）
-    val hasHandledProgressDialog = viewModel.hasProgressDialogBeenHandled(comicId, chapter)
+    // 使用 rememberSaveable 跟踪对话框状态：导航离开时自动清除，配置变更时保留
+    var hasHandledProgressDialog by rememberSaveable { mutableStateOf(false) }
     // 阅读模式状态（默认垂直模式）
     var readingMode by remember(comicId) { mutableStateOf(ReadingMode.VERTICAL) }
     // 当前页码：composable 重建时从 ViewModel 同步恢复真实页码，避免第一帧渲染 page 0
@@ -77,8 +83,12 @@ fun ReaderScreen(
         0
     }
     var currentPageIndex by remember(comicId, chapter) { mutableIntStateOf(initialPageIndex) }
+    // 跳转请求：仅在外部触发（对话框/进度条点击）时设置，避免 onPageChanged 反馈循环
+    var jumpTargetPage by remember(comicId, chapter) { mutableStateOf<Int?>(null) }
     // 顶部栏是否显示
     var showTopBar by remember { mutableStateOf(true) }
+    // 所有图片的预计算高度（按比例），确保 LazyColumn 项高度固定不变
+    var pageHeights by remember(comicId, chapter) { mutableStateOf<Map<Int, Dp>?>(null) }
     // 图片是否已加载完成
     var isImagesReady by remember(comicId, chapter) { mutableStateOf(false) }
     // 进度是否已恢复（防止恢复前误保存）
@@ -92,28 +102,59 @@ fun ReaderScreen(
         viewModel.loadImages(comicId, chapter)
     }
 
-    // 图片加载完成后标记就绪，并检查阅读进度
+    // 图片加载完成后：预缓存所有图片 → 计算所有高度 → 检查阅读进度
     LaunchedEffect(images) {
         if (images.isNotEmpty()) {
-            Log.d("ReaderScreen", "[图片就绪] comicId=$comicId, images=${images.size}, hasHandled=$hasHandledProgressDialog, savedProgress=${if(savedProgress!=null) "ch=${savedProgress!!.first},p=${savedProgress!!.second}" else "null"}")
+            // 1. 预缓存所有图片文件 + 并行计算宽高比
+            val snapshot = images.toList()
+            val widthPx = context.resources.displayMetrics.widthPixels
+
+            coroutineScope {
+                val results = snapshot.mapIndexed { i, imagePath ->
+                    async(Dispatchers.IO) {
+                        try {
+                            val cacheFile = File(context.cacheDir, "comic_pages/${comicId}_${chapter}_$i")
+                            if (!cacheFile.exists()) {
+                                cacheFile.parentFile?.mkdirs()
+                                val bytes = viewModel.getImageBytes(comicId, chapter, imagePath)
+                                if (bytes != null) cacheFile.writeBytes(bytes)
+                            }
+                            if (cacheFile.exists()) {
+                                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                                BitmapFactory.decodeFile(cacheFile.absolutePath, options)
+                                if (options.outWidth > 0 && options.outHeight > 0) {
+                                    val heightPx = widthPx * options.outHeight.toFloat() / options.outWidth
+                                    i to heightPx
+                                } else null
+                            } else null
+                        } catch (e: Exception) {
+                            null
+                        }
+                    }
+                }
+                val pixelHeights = results.mapNotNull { it.await() }
+                pageHeights = pixelHeights.map { (index, heightPx) ->
+                    index to with(density) { heightPx.toDp() }
+                }.toMap()
+            }
+
+            Log.d("ReaderScreen", "[图片就绪] comicId=$comicId, images=${images.size}, hasHandled=$hasHandledProgressDialog, heights=${pageHeights?.size}")
             isImagesReady = true
-            // 首次加载且未处理过对话框时，检查是否有保存的阅读进度
+
+            // 2. 检查阅读进度
             if (!hasHandledProgressDialog && savedProgress == null) {
                 savedProgress = viewModel.getReadingProgress(comicId)
                 Log.d("ReaderScreen", "[查进度] savedProgress=${if(savedProgress!=null) "ch=${savedProgress!!.first},p=${savedProgress!!.second}" else "null"}")
                 if (savedProgress != null) {
                     showProgressDialog = true
                 } else {
-                    // 没有保存的进度，标记为已恢复
                     isProgressRestored = true
-                    viewModel.markProgressDialogHandled(comicId, chapter)
+                    hasHandledProgressDialog = true
                 }
             } else if (hasHandledProgressDialog) {
-                // composable 重建场景：从 ViewModel 恢复真实页码，防止用 page=0 覆盖正确进度
                 val restoredPage = viewModel.getLastSavedPageIndex(comicId)
                 Log.d("ReaderScreen", "[重建恢复] hasHandled=true, restoredPage=$restoredPage, imagesSize=${images.size}")
                 currentPageIndex = restoredPage.coerceIn(0, images.size - 1)
-                // 不立即设置 isProgressRestored，等 onPageChanged 确认页码后再允许保存
             }
         }
     }
@@ -123,33 +164,6 @@ fun ReaderScreen(
         if (isImagesReady && isProgressRestored && images.isNotEmpty()) {
             Log.d("ReaderScreen", "[保存进度] comicId=$comicId, chapter=$chapter, page=$currentPageIndex")
             viewModel.saveReadingProgress(comicId, chapter, currentPageIndex)
-        }
-    }
-
-    // 用户离开阅读器时，清除对话框处理标记，下次打开同一漫画时对话框可以正常弹出
-    DisposableEffect(comicId, chapter) {
-        Log.d("ReaderScreen", "[进入] comicId=$comicId, chapter=$chapter")
-        onDispose {
-            Log.d("ReaderScreen", "[离开] comicId=$comicId, chapter=$chapter, currentPageIndex=$currentPageIndex")
-            viewModel.clearProgressDialogState(comicId, chapter)
-        }
-    }
-
-    // 预加载图片缓存
-    LaunchedEffect(images) {
-        // 捕获当前列表快照，避免异步执行过程中列表变化导致越界
-        val imagesSnapshot = images.toList()
-        if (imagesSnapshot.isNotEmpty()) {
-            imagesSnapshot.forEachIndexed { i, imagePath ->
-                val cacheFile = File(context.cacheDir, "comic_pages/${comicId}_${chapter}_$i")
-                if (!cacheFile.exists()) {
-                    cacheFile.parentFile?.mkdirs()
-                    withContext(Dispatchers.IO) {
-                        val bytes = viewModel.getImageBytes(comicId, chapter, imagePath)
-                        if (bytes != null) cacheFile.writeBytes(bytes)
-                    }
-                }
-            }
         }
     }
 
@@ -227,24 +241,36 @@ fun ReaderScreen(
                         images = images,
                         viewModel = viewModel,
                         initialPage = currentPageIndex,
+                        jumpTargetPage = jumpTargetPage,
+                        onJumpConsumed = { jumpTargetPage = null },
                         onPageChanged = { currentPageIndex = it },
                         onTapCenter = { showTopBar = !showTopBar }
                     )
-                    ReadingMode.VERTICAL -> VerticalReader(
-                        comicId = comicId,
-                        chapter = chapter,
-                        images = images,
-                        viewModel = viewModel,
-                        initialPage = currentPageIndex,
-                        onPageChanged = { currentPageIndex = it },
-                        onTapCenter = { showTopBar = !showTopBar }
-                    )
+                    ReadingMode.VERTICAL -> {
+                        if (pageHeights != null) {
+                            VerticalReader(
+                                comicId = comicId,
+                                chapter = chapter,
+                                images = images,
+                                pageHeights = pageHeights ?: emptyMap(),
+                                viewModel = viewModel,
+                                initialPage = currentPageIndex,
+                                jumpTargetPage = jumpTargetPage,
+                                onJumpConsumed = { jumpTargetPage = null },
+                                onPageChanged = { currentPageIndex = it },
+                                onTapCenter = { showTopBar = !showTopBar }
+                            )
+                        } else {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator()
+                            }
+                        }
+                    }
                 }
-
-                // 底部页码指示器（水平模式）
-                if (readingMode == ReadingMode.HORIZONTAL && showTopBar) {
-                    // 页码在 HorizontalReader 内部显示
-                }
+                // 水平模式下页码在 HorizontalReader 内部显示
             }
         }
     }
@@ -256,7 +282,7 @@ fun ReaderScreen(
             onDismissRequest = {
                 showProgressDialog = false
                 savedProgress = null  // 清除旧进度，防止下次重入时残留
-                viewModel.markProgressDialogHandled(comicId, chapter)
+                hasHandledProgressDialog = true
                 isProgressRestored = true
             },
             title = { Text("继续阅读") },
@@ -267,9 +293,10 @@ fun ReaderScreen(
                 TextButton(onClick = {
                     showProgressDialog = false
                     savedProgress = null  // 清除旧进度，防止下次重入时残留
-                    viewModel.markProgressDialogHandled(comicId, chapter)
+                    hasHandledProgressDialog = true
                     val targetPage = progress.second.coerceIn(0, images.size - 1)
                     currentPageIndex = targetPage
+                    jumpTargetPage = targetPage
                     isProgressRestored = true
                 }) {
                     Text("继续")
@@ -279,7 +306,7 @@ fun ReaderScreen(
                 TextButton(onClick = {
                     showProgressDialog = false
                     savedProgress = null  // 清除旧进度，防止下次重入时残留
-                    viewModel.markProgressDialogHandled(comicId, chapter)
+                    hasHandledProgressDialog = true
                     isProgressRestored = true
                 }) {
                     Text("从头开始")
@@ -300,24 +327,26 @@ private fun HorizontalReader(
     images: List<String>,
     viewModel: ComicReaderViewModel,
     initialPage: Int,
+    jumpTargetPage: Int?,
+    onJumpConsumed: () -> Unit,
     onPageChanged: (Int) -> Unit,
     onTapCenter: () -> Unit
 ) {
     val pagerState = rememberPagerState(initialPage = initialPage.coerceIn(0, images.size - 1), pageCount = { images.size })
-    val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
     // 用 CompletableDeferred 确保初始滚动完成后再触发 onPageChanged 回调
     val initialScrollDone = remember { CompletableDeferred<Unit>() }
 
-    // 监听 initialPage 变化，跳转到指定页面
-    LaunchedEffect(initialPage) {
-        Log.d("ReaderScreen", "[H初始滚动] initialPage=$initialPage, currentPage=${pagerState.currentPage}")
-        if (initialPage > 0 && initialPage != pagerState.currentPage) {
-            pagerState.scrollToPage(initialPage)
+    // 监听跳转请求（仅来自对话框/进度条点击，避免 onPageChanged 反馈循环）
+    LaunchedEffect(jumpTargetPage) {
+        val target = jumpTargetPage
+        if (target != null) {
+            Log.d("ReaderScreen", "[H跳转] jumpTarget=$target, currentPage=${pagerState.currentPage}")
+            pagerState.scrollToPage(target.coerceIn(0, images.size - 1))
+            onJumpConsumed()
         }
         initialScrollDone.complete(Unit)
-        Log.d("ReaderScreen", "[H初始滚动完成] currentPage=${pagerState.currentPage}")
     }
 
     // 页码变化时回调（等待初始滚动完成）
@@ -325,21 +354,6 @@ private fun HorizontalReader(
         initialScrollDone.await()
         Log.d("ReaderScreen", "[H页码变化] pagerPage=${pagerState.currentPage}")
         onPageChanged(pagerState.currentPage)
-        // 预加载相邻页
-        val currentPage = pagerState.currentPage
-        for (offset in -1..1) {
-            val pageIndex = currentPage + offset
-            if (pageIndex in images.indices) {
-                val cacheFile = File(context.cacheDir, "comic_pages/${comicId}_${chapter}_$pageIndex")
-                if (!cacheFile.exists()) {
-                    cacheFile.parentFile?.mkdirs()
-                    withContext(Dispatchers.IO) {
-                        val bytes = viewModel.getImageBytes(comicId, chapter, images[pageIndex])
-                        if (bytes != null) cacheFile.writeBytes(bytes)
-                    }
-                }
-            }
-        }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -411,8 +425,11 @@ private fun VerticalReader(
     comicId: String,
     chapter: String,
     images: List<String>,
+    pageHeights: Map<Int, Dp>,
     viewModel: ComicReaderViewModel,
     initialPage: Int,
+    jumpTargetPage: Int?,
+    onJumpConsumed: () -> Unit,
     onPageChanged: (Int) -> Unit,
     onTapCenter: () -> Unit
 ) {
@@ -420,21 +437,26 @@ private fun VerticalReader(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
+    // 基于屏幕宽度的默认高度（2:3 宽高比）
+    val defaultHeight = with(LocalDensity.current) {
+        (context.resources.displayMetrics.widthPixels * 1.5f).toDp()
+    }
+
     // 用 CompletableDeferred 确保初始滚动完成后再触发 onPageChanged 回调
     val initialScrollDone = remember { CompletableDeferred<Unit>() }
 
-    // 监听 initialPage 变化，跳转到指定页面
-    LaunchedEffect(initialPage) {
-        Log.d("ReaderScreen", "[V初始滚动] initialPage=$initialPage, firstVisible=${listState.firstVisibleItemIndex}")
-        if (initialPage > 0 && initialPage != listState.firstVisibleItemIndex) {
-            listState.scrollToItem(initialPage)
+    // 监听跳转请求（仅来自对话框/进度条点击，避免 onPageChanged 反馈循环）
+    LaunchedEffect(jumpTargetPage) {
+        val target = jumpTargetPage
+        if (target != null) {
+            Log.d("ReaderScreen", "[V跳转] jumpTarget=$target, firstVisible=${listState.firstVisibleItemIndex}")
+            listState.scrollToItem(target.coerceIn(0, images.size - 1))
+            onJumpConsumed()
         }
         initialScrollDone.complete(Unit)
-        Log.d("ReaderScreen", "[V初始滚动完成] firstVisible=${listState.firstVisibleItemIndex}")
     }
 
-    // 跟踪上次滚动到的页面，避免重复滚动
-    var lastScrolledPage by remember { mutableIntStateOf(-1) }
+    // 跟踪滚动任务，避免并发滚动
     var scrollJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     // 检测快速滑动（速度阈值）
@@ -472,21 +494,6 @@ private fun VerticalReader(
         initialScrollDone.await()
         Log.d("ReaderScreen", "[V页码变化] firstVisible=${listState.firstVisibleItemIndex}")
         onPageChanged(listState.firstVisibleItemIndex)
-        // 预加载前后5张图片
-        val first = listState.firstVisibleItemIndex
-        for (offset in -2..5) {
-            val pageIndex = first + offset
-            if (pageIndex in images.indices) {
-                val cacheFile = File(context.cacheDir, "comic_pages/${comicId}_${chapter}_$pageIndex")
-                if (!cacheFile.exists()) {
-                    cacheFile.parentFile?.mkdirs()
-                    withContext(Dispatchers.IO) {
-                        val bytes = viewModel.getImageBytes(comicId, chapter, images[pageIndex])
-                        if (bytes != null) cacheFile.writeBytes(bytes)
-                    }
-                }
-            }
-        }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -514,7 +521,8 @@ private fun VerticalReader(
                     chapter = chapter,
                     imagePath = images[index],
                     pageIndex = index,
-                    viewModel = viewModel
+                    viewModel = viewModel,
+                    fixedHeight = pageHeights[index] ?: defaultHeight
                 )
             }
         }
@@ -527,9 +535,7 @@ private fun VerticalReader(
                 // 取消之前的滚动任务，避免并发滚动
                 scrollJob?.cancel()
                 scrollJob = coroutineScope.launch {
-                    Log.d("SideProgressBar", "开始滚动: page=$newPage, 当前firstVisible=${listState.firstVisibleItemIndex}")
                     listState.scrollToItem(newPage)
-                    Log.d("SideProgressBar", "滚动完成: firstVisible=${listState.firstVisibleItemIndex}")
                 }
             },
             modifier = Modifier.align(Alignment.CenterEnd),
@@ -547,7 +553,8 @@ fun VerticalComicPage(
     chapter: String,
     imagePath: String,
     pageIndex: Int,
-    viewModel: ComicReaderViewModel
+    viewModel: ComicReaderViewModel,
+    fixedHeight: Dp
 ) {
     val context = LocalContext.current
     val cacheFile = remember(comicId, chapter, pageIndex) {
@@ -555,6 +562,7 @@ fun VerticalComicPage(
     }
     var fileReady by remember { mutableStateOf(cacheFile.exists()) }
 
+    // 仅在缓存不存在时下载（多数情况下在 ReaderScreen 中已预缓存）
     LaunchedEffect(imagePath, cacheFile) {
         if (!cacheFile.exists()) {
             cacheFile.parentFile?.mkdirs()
@@ -569,6 +577,8 @@ fun VerticalComicPage(
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            .height(fixedHeight)
+            .graphicsLayer { clip = true }
             .background(Color.Black),
         contentAlignment = Alignment.Center
     ) {
@@ -579,18 +589,11 @@ fun VerticalComicPage(
                     .crossfade(false)
                     .build(),
                 contentDescription = "漫画第 ${pageIndex + 1} 页",
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.FillWidth
             )
         } else {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(400.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(color = Color.White)
-            }
+            CircularProgressIndicator(color = Color.White)
         }
     }
 }
@@ -786,7 +789,6 @@ fun SideProgressBar(
                                 val newPage = (progress * (totalPages - 1)).toInt()
                                 // 只在页码变化时触发
                                 if (newPage != lastJumpPage) {
-                                    Log.d("SideProgressBar", "拖动: pos=${dragPositionPx}, progress=$progress, page=$newPage")
                                     lastJumpPage = newPage
                                     onPageJump(newPage)
                                 }
