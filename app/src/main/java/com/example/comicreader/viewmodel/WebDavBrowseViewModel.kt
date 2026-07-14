@@ -12,10 +12,21 @@ import com.example.comicreader.repository.ComicRepository
 import com.example.comicreader.repository.WebDavServerRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/** 文件排序模式 */
+enum class SortMode {
+    NAME_ASC,
+    NAME_DESC,
+    SIZE_ASC,
+    SIZE_DESC
+}
 
 class WebDavBrowseViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -27,8 +38,34 @@ class WebDavBrowseViewModel(application: Application) : AndroidViewModel(applica
     private val comicRepo = ComicRepository.getInstance(application)
     private val webDavClient = WebDavClient()
 
+    /** 原始（未排序）条目列表 */
     private val _entries = MutableStateFlow<List<WebDavEntry>>(emptyList())
-    val entries: StateFlow<List<WebDavEntry>> = _entries.asStateFlow()
+
+    private val _sortMode = MutableStateFlow(SortMode.NAME_ASC)
+    val sortMode: StateFlow<SortMode> = _sortMode.asStateFlow()
+
+    /** 根据排序模式对条目排序 */
+    private fun sortEntries(entries: List<WebDavEntry>, mode: SortMode): List<WebDavEntry> {
+        return when (mode) {
+            SortMode.NAME_ASC -> entries.sortedWith(
+                compareByDescending<WebDavEntry> { it.isDirectory }.thenBy { it.name.lowercase() }
+            )
+            SortMode.NAME_DESC -> entries.sortedWith(
+                compareByDescending<WebDavEntry> { it.isDirectory }.thenByDescending { it.name.lowercase() }
+            )
+            SortMode.SIZE_ASC -> entries.sortedWith(
+                compareByDescending<WebDavEntry> { it.isDirectory }.thenBy { it.size }
+            )
+            SortMode.SIZE_DESC -> entries.sortedWith(
+                compareByDescending<WebDavEntry> { it.isDirectory }.thenByDescending { it.size }
+            )
+        }
+    }
+
+    /** 对外暴露的已排序条目列表 */
+    val entries: StateFlow<List<WebDavEntry>> = combine(_entries, _sortMode) { raw, mode ->
+        sortEntries(raw, mode)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private val _currentPath = MutableStateFlow("/")
     val currentPath: StateFlow<String> = _currentPath.asStateFlow()
@@ -45,6 +82,15 @@ class WebDavBrowseViewModel(application: Application) : AndroidViewModel(applica
     private var serverConfig: WebDavServerConfig? = null
     private var currentServerId: String? = null
 
+    /** 各目录保存的滚动位置（跨导航持久化） */
+    val savedScrollPositions = mutableMapOf<String, Int>()
+
+    /** 上次进入的子目录名称（跨导航持久，返回时高亮用） */
+    var lastSubDir: String? = null
+
+    /** 当前高亮的目录名（跨导航持久，返回时设置，进入新目录时清除） */
+    var highlightDir: String? = null
+
     fun init(serverId: String) {
         Log.d(TAG, "init: serverId=$serverId")
         currentServerId = serverId
@@ -58,6 +104,12 @@ class WebDavBrowseViewModel(application: Application) : AndroidViewModel(applica
         val startPath = serverConfig?.lastPath ?: "/"
         Log.d(TAG, "init: server=${serverConfig?.name}, url=${serverConfig?.url}, lastPath=$startPath")
         loadDirectory(startPath)
+    }
+
+    fun setSortMode(mode: SortMode) {
+        _sortMode.value = mode
+        // 排序模式变化时清除缓存的滚动位置（条目顺序变了）
+        savedScrollPositions.clear()
     }
 
     fun loadDirectory(path: String) {

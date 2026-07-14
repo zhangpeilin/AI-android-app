@@ -1,24 +1,25 @@
 package com.example.comicreader.ui.screens
 
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.comicreader.model.WebDavEntry
+import com.example.comicreader.viewmodel.SortMode
 import com.example.comicreader.viewmodel.WebDavBrowseViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -35,13 +36,38 @@ fun WebDavBrowseScreen(
     val isLoading by viewModel.isLoading.collectAsState()
     val downloadProgress by viewModel.downloadProgress.collectAsState()
     val error by viewModel.error.collectAsState()
+    val sortMode by viewModel.sortMode.collectAsState()
+
+    val listState = rememberLazyListState()
+    // 排序菜单状态
+    var showSortMenu by remember { mutableStateOf(false) }
+
+    // 日志 Tag
+    val tag = "WebDavBrowse"
 
     LaunchedEffect(serverId) {
         viewModel.init(serverId)
     }
 
+    // 加载完成后恢复滚动位置（监听 isLoading 确保 LazyColumn 已就绪）
+    LaunchedEffect(isLoading) {
+        if (!isLoading && entries.isNotEmpty()) {
+            val path = currentPath
+            val savedPos = viewModel.savedScrollPositions[path]
+            Log.d(tag, "加载完成: path=$path, savedPos=$savedPos, entries=${entries.size}, firstVisible=${listState.firstVisibleItemIndex}")
+            if (savedPos != null && savedPos > 0) {
+                val target = savedPos.coerceAtMost(entries.size - 1)
+                Log.d(tag, "滚动到: pos=$target")
+                listState.scrollToItem(target)
+            }
+        }
+    }
+
     // 返回上级目录处理
     BackHandler {
+        viewModel.savedScrollPositions[currentPath] = listState.firstVisibleItemIndex
+        viewModel.highlightDir = viewModel.lastSubDir
+        Log.d(tag, "返回上级: save=${listState.firstVisibleItemIndex}, highlight=${viewModel.highlightDir}")
         if (!viewModel.goBack()) {
             onBackClick()
         }
@@ -68,6 +94,9 @@ fun WebDavBrowseScreen(
                     },
                     navigationIcon = {
                         IconButton(onClick = {
+                            viewModel.savedScrollPositions[currentPath] = listState.firstVisibleItemIndex
+                            viewModel.highlightDir = viewModel.lastSubDir
+                            Log.d(tag, "返回上级(按钮): save=${listState.firstVisibleItemIndex}, highlight=${viewModel.highlightDir}")
                             if (!viewModel.goBack()) {
                                 onBackClick()
                             }
@@ -76,6 +105,65 @@ fun WebDavBrowseScreen(
                         }
                     },
                     actions = {
+                        // 排序按钮
+                        Box {
+                            IconButton(onClick = { showSortMenu = true }) {
+                                Icon(Icons.Default.Sort, contentDescription = "排序")
+                            }
+                            DropdownMenu(
+                                expanded = showSortMenu,
+                                onDismissRequest = { showSortMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("名称 A-Z") },
+                                    onClick = {
+                                        viewModel.setSortMode(SortMode.NAME_ASC)
+                                        showSortMenu = false
+                                    },
+                                    leadingIcon = {
+                                        if (sortMode == SortMode.NAME_ASC) {
+                                            Icon(Icons.Default.Check, contentDescription = null)
+                                        }
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("名称 Z-A") },
+                                    onClick = {
+                                        viewModel.setSortMode(SortMode.NAME_DESC)
+                                        showSortMenu = false
+                                    },
+                                    leadingIcon = {
+                                        if (sortMode == SortMode.NAME_DESC) {
+                                            Icon(Icons.Default.Check, contentDescription = null)
+                                        }
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("大小 ↑") },
+                                    onClick = {
+                                        viewModel.setSortMode(SortMode.SIZE_ASC)
+                                        showSortMenu = false
+                                    },
+                                    leadingIcon = {
+                                        if (sortMode == SortMode.SIZE_ASC) {
+                                            Icon(Icons.Default.Check, contentDescription = null)
+                                        }
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("大小 ↓") },
+                                    onClick = {
+                                        viewModel.setSortMode(SortMode.SIZE_DESC)
+                                        showSortMenu = false
+                                    },
+                                    leadingIcon = {
+                                        if (sortMode == SortMode.SIZE_DESC) {
+                                            Icon(Icons.Default.Check, contentDescription = null)
+                                        }
+                                    }
+                                )
+                            }
+                        }
                         IconButton(onClick = onHomeClick) {
                             Icon(Icons.Default.Home, contentDescription = "返回首页")
                         }
@@ -117,7 +205,10 @@ fun WebDavBrowseScreen(
                             style = MaterialTheme.typography.bodyLarge
                         )
                         Spacer(modifier = Modifier.height(16.dp))
-                        Button(onClick = { viewModel.loadDirectory(currentPath) }) {
+                        Button(onClick = {
+                            viewModel.savedScrollPositions.clear()
+                            viewModel.loadDirectory(currentPath)
+                        }) {
                             Text("重试")
                         }
                     }
@@ -136,14 +227,20 @@ fun WebDavBrowseScreen(
                 }
                 else -> {
                     LazyColumn(
+                        state = listState,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(vertical = 8.dp)
                     ) {
                         items(entries) { entry ->
                             WebDavEntryItem(
                                 entry = entry,
+                                isHighlighted = entry.name == viewModel.highlightDir,
                                 onClick = {
                                     if (entry.isDirectory) {
+                                        viewModel.savedScrollPositions[currentPath] = listState.firstVisibleItemIndex
+                                        viewModel.lastSubDir = entry.name
+                                        viewModel.highlightDir = null  // 进入新目录，清除高亮
+                                        Log.d(tag, "进入目录: path=$currentPath, savePos=${listState.firstVisibleItemIndex}, dir=${entry.name}")
                                         viewModel.enterDirectory(entry)
                                     } else if (entry.name.lowercase().endsWith(".zip")) {
                                         viewModel.openComic(entry) { comic ->
@@ -163,6 +260,7 @@ fun WebDavBrowseScreen(
 @Composable
 fun WebDavEntryItem(
     entry: WebDavEntry,
+    isHighlighted: Boolean = false,
     onClick: () -> Unit
 ) {
     ListItem(
@@ -196,6 +294,13 @@ fun WebDavEntryItem(
                     tint = MaterialTheme.colorScheme.secondary
                 )
             }
+        },
+        colors = if (isHighlighted) {
+            ListItemDefaults.colors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer
+            )
+        } else {
+            ListItemDefaults.colors()
         },
         modifier = Modifier.clickable(onClick = onClick)
     )

@@ -308,7 +308,7 @@ class WebDavClient {
             Log.e(TAG, "parsePropfindResponse: XML解析异常", e)
         }
 
-        // 排序：目录在前，文件在后，各自按名称排序
-        return entries.sortedWith(compareByDescending<WebDavEntry> { it.isDirectory }.thenBy { it.name.lowercase() })
+        // 不在此排序，由 ViewModel 根据用户选择的排序模式处理
+        return entries
     }
 }
