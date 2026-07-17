@@ -340,6 +340,37 @@ cd /Users/zpl/private/AI-project/AI-android-app && git add -A && git commit -m "
   - 所有 Bug 修复的说明
 - `git push origin main`：推送到远程仓库
 
+### 31. 提交 OOM 崩溃修复 + 进度弹窗提前
+```bash
+cd /Users/zpl/private/AI-project/AI-android-app && git add -A && git commit -m "fix: OOM崩溃与缓存污染 - 流式写入ZIP图片+顺序缓存+进度弹窗提前" && git push origin dev
+```
+**说明：**
+- 修复大 ZIP 文件（581MB/229张图片）阅读时 OOM 崩溃
+- 核心修复：`writeImageToFile()` 流式写入替代 `getImageBytes()` 全量 ByteArray
+- 核心修复：顺序加载 `forEachIndexed` 替代并发 `async`，避免同时创建 229 个协程
+- 优化：进度弹窗检查移到图片缓存之前，避免等待 229 张图片缓存完成后才弹出
+
+### 32. 提交首页漫画列表功能增强
+```bash
+cd /Users/zpl/private/AI-project/AI-android-app && git add -A && git commit -m "feat: 首页漫画列表功能增强" && git push origin dev
+```
+**说明：**
+- Comic 模型新增 `pageCount` 字段
+- ComicRepository 新增 `ComicSortMode` 枚举、`deleteComic/deleteComics`、`getPageCount`、`sortComics` 等方法
+- 首页长按弹出菜单（选择/删除缓存）
+- 多选模式 + 批量删除
+- 卡片显示阅读进度、文件大小、页数
+- 排序按钮（文件名/阅读时间/文件大小/页数）
+
+### 33. 提交垂直阅读最后一页进度修复
+```bash
+cd /Users/zpl/private/AI-project/AI-android-app && git add -A && git commit -m "fix: 垂直阅读模式最后一页阅读进度不保存" && git push origin dev
+```
+**说明：**
+- 修复问题：7页漫画滚动到底后首页显示 6/7，应为 7/7
+- 根因：`LazyColumn.firstVisibleItemIndex` 在末页填不满屏幕时不更新
+- 修复：在滚动停止时检查 `visibleItemsInfo.lastOrNull()?.index`，若已是末页则强制保存
+
 ---
 
 ## 十一、完整构建流程（一键命令）
@@ -385,4 +416,85 @@ cd /Users/zpl/private/AI-project/AI-android-app && \
   adb install -r app/build/outputs/apk/debug/app-debug.apk && \
   adb shell am start -n com.example.comicreader/.MainActivity
 ```
+
+---
+
+## 十三、新版本完整构建流程（含清理）
+
+```bash
+# 构建 + 安装 + 强制停止 + 清日志 一条龙
+export JAVA_HOME=/Users/zpl/.jdks/jdk-17.0.19+10/Contents/Home
+export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
+export PATH=$ANDROID_HOME/platform-tools:$PATH
+
+cd /Users/zpl/private/AI-project/AI-android-app
+./gradlew assembleDebug && \
+  adb install -r app/build/outputs/apk/debug/app-debug.apk && \
+  adb shell am force-stop com.example.comicreader && \
+  adb shell run-as com.example.comicreader "rm -rf cache/comic_pages/" && \
+  adb logcat -c
+```
+**说明：**
+- `am force-stop`：强制停止应用进程，避免旧进程持有缓存引用
+- `run-as com.example.comicreader "rm -rf cache/comic_pages/"`：清除图片缓存（修复页面显示错乱时使用）
+- `logcat -c`：清空日志缓冲区，只保留后续操作的新日志
+
+### 36. 清除图片缓存
+```bash
+adb shell run-as com.example.comicreader "rm -rf cache/comic_pages/"
+```
+**说明：** 当图片排序逻辑变化后，旧缓存可能索引错位导致图片内容不匹配，需要手动清除。
+
+### 37. 查看应用进程 ID
+```bash
+export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
+export PATH=$ANDROID_HOME/platform-tools:$PATH
+adb shell pidof com.example.comicreader
+```
+**说明：** 获取进程 PID 后可用于按 PID 过滤日志。
+
+### 38. 查看崩溃日志（OOM）
+```bash
+export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
+export PATH=$ANDROID_HOME/platform-tools:$PATH
+adb logcat -d | grep -E "(AndroidRuntime|FATAL|OutOfMemory)" | head -20
+```
+**说明：**
+- 同时过滤 AndroidRuntime 崩溃、FATAL 异常和 OutOfMemory 错误
+- `head -20`：只显示前 20 行堆栈
+
+### 39. 查看应用自定义日志
+```bash
+export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
+export PATH=$ANDROID_HOME/platform-tools:$PATH
+adb logcat -d | grep -E "(ComicReader|ZipHelper|ComicRepo|ReaderScreen)" | tail -40
+```
+**说明：** 一次性查看多个模块的调试日志，无需等待时使用 `-d` dump 模式。
+
+---
+
+## 十四、Git 常用操作
+
+### 42. 查看提交历史（简洁版）
+```bash
+cd /Users/zpl/private/AI-project/AI-android-app && git log --oneline -15
+```
+**说明：**
+- `--oneline`：每行显示一个提交（commit hash 简写 + 标题）
+- `-15`：只显示最近 15 条
+
+### 43. 查看提交统计
+```bash
+cd /Users/zpl/private/AI-project/AI-android-app && git log --oneline -5 --stat
+```
+**说明：** `--stat` 显示每个提交修改的文件列表和变更行数。
+
+---
+
+## 十五、APK 路径
+
+| 产物 | 路径 |
+|------|------|
+| Debug APK | `app/build/outputs/apk/debug/app-debug.apk` |
+| 构建目录 | `app/build/` |
 
