@@ -38,7 +38,6 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
-import coil.request.CachePolicy
 import coil.request.ImageRequest
 import com.example.comicreader.viewmodel.ComicReaderViewModel
 import android.util.Log
@@ -550,6 +549,27 @@ private fun VerticalReader(
 }
 
 /**
+ * 估算 Coil 按 size(screenW, 4096) 解码后的位图尺寸（2 的幂采样，保证解码后 >= target），
+ * 任一边超过 4096（GPU 纹理上限）则必须软件解码，否则硬件位图渲染更快更流畅
+ */
+private fun needsSoftwareDecode(file: File, screenWidthPx: Int): Boolean {
+    return try {
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, opts)
+        if (opts.outWidth <= 0 || opts.outHeight <= 0) return false
+        var sample = 1
+        while (opts.outHeight / (sample * 2) >= 4096 || opts.outWidth / (sample * 2) >= screenWidthPx) {
+            sample *= 2
+        }
+        val decodedW = opts.outWidth / sample
+        val decodedH = opts.outHeight / sample
+        decodedW > 4096 || decodedH > 4096
+    } catch (e: Exception) {
+        true
+    }
+}
+
+/**
  * 垂直模式下的单页图片（宽度填满，高度自适应）
  */
 @Composable
@@ -565,6 +585,9 @@ fun VerticalComicPage(
     val cacheFile = remember(comicId, chapter, pageIndex) {
         File(context.cacheDir, "comic_pages/${comicId}_${chapter}_${pageIndex}")
     }
+    val screenWidthPx = remember { context.resources.displayMetrics.widthPixels }
+    // 解码后仍超 GPU 纹理上限的图才需要软件位图，普通图用硬件位图避免掉帧
+    val useSoftwareDecode = remember(cacheFile) { needsSoftwareDecode(cacheFile, screenWidthPx) }
     var fileReady by remember { mutableStateOf(cacheFile.exists()) }
 
     // 日志：当前页面渲染的图片
@@ -599,11 +622,10 @@ fun VerticalComicPage(
                 model = ImageRequest.Builder(context)
                     .data(cacheFile)
                     .crossfade(false)
-                    // 不保留内存缓存：长条漫画数百页时避免位图累积导致内存耗尽黑屏
-                    .memoryCachePolicy(CachePolicy.DISABLED)
-                    // 限制最大解码高度（等比缩小超高长图），避免超出 GPU 硬件位图限制导致黑屏
-                    .size(Int.MAX_VALUE, 4096)
-                    .allowHardware(false)
+                    // 解码尺寸适配屏幕宽度（上限高度 4096），避免解码过大位图拖慢渲染
+                    .size(screenWidthPx, 4096)
+                    // 仅超高长图禁用硬件位图（超出 GPU 纹理上限会黑屏），普通图硬件渲染更流畅
+                    .allowHardware(!useSoftwareDecode)
                     .build(),
                 contentDescription = "漫画第 ${pageIndex + 1} 页",
                 modifier = Modifier.fillMaxSize(),
@@ -683,6 +705,10 @@ fun ZoomableImage(
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
     val isZoomed = scale > 1.01f
+    val context = LocalContext.current
+    val screenWidthPx = remember { context.resources.displayMetrics.widthPixels }
+    // 解码后仍超 GPU 纹理上限的图才需要软件位图，普通图用硬件位图避免掉帧
+    val useSoftwareDecode = remember(model) { needsSoftwareDecode(model, screenWidthPx) }
 
     Box(
         modifier = Modifier
@@ -718,14 +744,13 @@ fun ZoomableImage(
         contentAlignment = Alignment.Center
     ) {
         AsyncImage(
-            model = ImageRequest.Builder(LocalContext.current)
+            model = ImageRequest.Builder(context)
                 .data(model)
                 .crossfade(false)
-                // 不保留内存缓存：避免多页浏览时位图累积导致内存耗尽
-                .memoryCachePolicy(CachePolicy.DISABLED)
-                // 限制最大解码高度（等比缩小超高长图），避免超出 GPU 硬件位图限制导致黑屏
-                .size(Int.MAX_VALUE, 4096)
-                .allowHardware(false)
+                // 解码尺寸适配屏幕宽度（上限高度 4096），避免解码过大位图拖慢渲染
+                .size(screenWidthPx, 4096)
+                // 仅超高长图禁用硬件位图（超出 GPU 纹理上限会黑屏），普通图硬件渲染更流畅
+                .allowHardware(!useSoftwareDecode)
                 .build(),
             contentDescription = contentDescription,
             modifier = Modifier
