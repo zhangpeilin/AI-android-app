@@ -1,6 +1,9 @@
 package com.example.comicreader.ui.screens
 
+import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -62,12 +65,51 @@ fun ComicListScreen(
     val selectedFolder by viewModel.selectedFolderName.collectAsState()
     val sortMode by viewModel.sortMode.collectAsState()
     val selectedIds by viewModel.selectedIds.collectAsState()
+    val context = LocalContext.current
 
     var isGridView by remember { mutableStateOf(true) }
     var showSortMenu by remember { mutableStateOf(false) }
     var contextMenuComicId by remember { mutableStateOf<String?>(null) }
     var showDeleteConfirmDialog by remember { mutableStateOf<String?>(null) } // null=关闭, "single_id"=单删, "all"=全删
     var deleteTargetIds by remember { mutableStateOf<List<String>>(emptyList()) }
+    var showPermissionDialog by remember { mutableStateOf(false) }
+
+    // 存储权限提示对话框（Android 11+ 需要 MANAGE_EXTERNAL_STORAGE）
+    if (showPermissionDialog) {
+        AlertDialog(
+            onDismissRequest = { showPermissionDialog = false },
+            title = { Text("需要存储权限") },
+            text = {
+                Text(
+                    "漫画 ZIP 文件将缓存到 Downloads/ComicReader/ 目录下方便您管理。" +
+                    "\n\n请授予「所有文件管理权限」以启用此功能。" +
+                    "\n\n如果拒绝，文件将使用内部缓存（不影响正常使用）。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showPermissionDialog = false
+                    try {
+                        val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                            data = Uri.parse("package:${context.packageName}")
+                        }
+                        context.startActivity(intent)
+                    } catch (e: Exception) {
+                        // 部分 ROM 不支持特定包名 intent，回退到通用设置
+                        val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                        context.startActivity(intent)
+                    }
+                }) {
+                    Text("去设置")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPermissionDialog = false }) {
+                    Text("暂不开启")
+                }
+            }
+        )
+    }
 
     // SAF 文件夹选择器
     val folderLauncher = rememberLauncherForActivityResult(
@@ -189,7 +231,15 @@ fun ComicListScreen(
                         IconButton(onClick = onWebDavClick) {
                             Icon(Icons.Default.Cloud, contentDescription = "WebDAV")
                         }
-                        IconButton(onClick = { folderLauncher.launch(null) }) {
+                        IconButton(onClick = {
+                            // Android 11+ 检查 MANAGE_EXTERNAL_STORAGE 权限
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+                                !android.os.Environment.isExternalStorageManager()) {
+                                showPermissionDialog = true
+                            } else {
+                                folderLauncher.launch(null)
+                            }
+                        }) {
                             Icon(Icons.Default.FolderOpen, contentDescription = "选择文件夹")
                         }
                     }

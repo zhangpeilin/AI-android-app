@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import coil.request.CachePolicy
 import coil.request.ImageRequest
 import com.example.comicreader.viewmodel.ComicReaderViewModel
 import android.util.Log
@@ -598,6 +599,11 @@ fun VerticalComicPage(
                 model = ImageRequest.Builder(context)
                     .data(cacheFile)
                     .crossfade(false)
+                    // 不保留内存缓存：长条漫画数百页时避免位图累积导致内存耗尽黑屏
+                    .memoryCachePolicy(CachePolicy.DISABLED)
+                    // 限制最大解码高度（等比缩小超高长图），避免超出 GPU 硬件位图限制导致黑屏
+                    .size(Int.MAX_VALUE, 4096)
+                    .allowHardware(false)
                     .build(),
                 contentDescription = "漫画第 ${pageIndex + 1} 页",
                 modifier = Modifier.fillMaxSize(),
@@ -715,6 +721,11 @@ fun ZoomableImage(
             model = ImageRequest.Builder(LocalContext.current)
                 .data(model)
                 .crossfade(false)
+                // 不保留内存缓存：避免多页浏览时位图累积导致内存耗尽
+                .memoryCachePolicy(CachePolicy.DISABLED)
+                // 限制最大解码高度（等比缩小超高长图），避免超出 GPU 硬件位图限制导致黑屏
+                .size(Int.MAX_VALUE, 4096)
+                .allowHardware(false)
                 .build(),
             contentDescription = contentDescription,
             modifier = Modifier

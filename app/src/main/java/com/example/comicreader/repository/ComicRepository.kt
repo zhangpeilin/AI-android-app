@@ -2,6 +2,8 @@ package com.example.comicreader.repository
 
 import android.content.Context
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
 import com.example.comicreader.model.Comic
@@ -45,9 +47,46 @@ class ComicRepository private constructor(private val context: Context) {
         context.getSharedPreferences("webdav_comics", Context.MODE_PRIVATE)
     }
 
-    // 缓存目录：存放从 SAF 复制过来的 zip 文件
+    // 缓存目录：存放从 SAF 复制过来的 zip 文件（用户可见的 Downloads/ComicReader/）
     private val zipCacheDir: File by lazy {
+        val publicDir = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            "ComicReader/zips"
+        )
+        // 尝试创建公共目录，失败则回退到内部缓存
+        try {
+            if (publicDir.mkdirs() || publicDir.exists()) {
+                Log.d(TAG, "zipCacheDir: 使用公共目录 ${publicDir.absolutePath}")
+                cleanOldZipCache()
+                return@lazy publicDir
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "zipCacheDir: 公共目录不可用，回退到内部缓存", e)
+        }
+        // 回退到内部缓存
         File(context.cacheDir, "comic_zips").also { it.mkdirs() }
+    }
+
+    /**
+     * 清理旧的内部 ZIP 缓存（路径变更后不再使用）
+     */
+    private fun cleanOldZipCache() {
+        try {
+            val oldDir = File(context.cacheDir, "comic_zips")
+            if (oldDir.exists()) {
+                oldDir.deleteRecursively()
+                Log.d(TAG, "cleanOldZipCache: 已清理旧的内部缓存 ${oldDir.absolutePath}")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "cleanOldZipCache: 清理失败", e)
+        }
+    }
+
+    /**
+     * 检查当前是否使用外部公共目录（用户可见）
+     */
+    fun isUsingExternalStorage(): Boolean {
+        return zipCacheDir.absolutePath.contains(Environment.DIRECTORY_DOWNLOADS)
     }
 
     /**
